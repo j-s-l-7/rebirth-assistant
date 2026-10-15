@@ -166,6 +166,127 @@ class SchemeMetric(Base):
     tier: Mapped[str | None] = mapped_column(String(12))  # core | satellite | watch | exit
 
 
+class SchemeDetail(Base):
+    """AMFI scheme master (DownloadSchemeData): every column of every row, keyed by AMFI code."""
+
+    __tablename__ = "scheme_detail"
+
+    amfi_code: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    amc_full_name: Mapped[str | None] = mapped_column(String(160))
+    scheme_base_name: Mapped[str | None] = mapped_column(String(255), index=True)
+    scheme_type: Mapped[str | None] = mapped_column(String(40))
+    scheme_category: Mapped[str | None] = mapped_column(String(160))
+    nav_name: Mapped[str | None] = mapped_column(String(255))
+    min_amount: Mapped[float | None] = mapped_column(Money())
+    launch_date: Mapped[date | None] = mapped_column(Date)
+    closure_date: Mapped[date | None] = mapped_column(Date)
+    isins: Mapped[list | None] = mapped_column(JSON)
+    raw: Mapped[dict] = mapped_column(JSON)  # the source row, untouched
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SchemeTer(Base):
+    """AMFI total expense ratio disclosure, stored as change points: a row is written only when
+    any published value changes, so the full daily history is reconstructable without storing
+    ~60k unchanged rows a month. Keyed by the NSDL scheme code (shared by a scheme's plans)."""
+
+    __tablename__ = "scheme_ter"
+    __table_args__ = (UniqueConstraint("nsdl_code", "effective_from"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    nsdl_code: Mapped[str] = mapped_column(String(40), index=True)
+    mf_id: Mapped[int | None] = mapped_column(Integer)
+    scheme_name: Mapped[str] = mapped_column(String(255))
+    scheme_category: Mapped[str | None] = mapped_column(String(160))
+    scheme_type: Mapped[str | None] = mapped_column(String(40))
+    effective_from: Mapped[date] = mapped_column(Date)
+    r_ber: Mapped[float | None] = mapped_column(Float)
+    r_brokerage: Mapped[float | None] = mapped_column(Float)
+    r_transaction: Mapped[float | None] = mapped_column(Float)
+    r_statutory: Mapped[float | None] = mapped_column(Float)
+    r_ter: Mapped[float | None] = mapped_column(Float)
+    d_ber: Mapped[float | None] = mapped_column(Float)
+    d_brokerage: Mapped[float | None] = mapped_column(Float)
+    d_transaction: Mapped[float | None] = mapped_column(Float)
+    d_statutory: Mapped[float | None] = mapped_column(Float)
+    d_ter: Mapped[float | None] = mapped_column(Float)
+
+
+class SchemePerformance(Base):
+    """AMFI fund-performance feed: returns vs the scheme's *official* benchmark, plus whatever
+    else the feed publishes (riskometer, AUM...). `raw` keeps the source record untouched."""
+
+    __tablename__ = "scheme_performance"
+    __table_args__ = (UniqueConstraint("external_key", "plan", "as_of"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    external_key: Mapped[str] = mapped_column(String(120), index=True)
+    plan: Mapped[str] = mapped_column(String(12))  # regular | direct
+    amfi_code: Mapped[int | None] = mapped_column(Integer, index=True)
+    scheme_name: Mapped[str] = mapped_column(String(255))
+    as_of: Mapped[date] = mapped_column(Date)
+    benchmark: Mapped[str | None] = mapped_column(String(255))
+    riskometer: Mapped[str | None] = mapped_column(String(30))
+    benchmark_riskometer: Mapped[str | None] = mapped_column(String(30))
+    aum_cr: Mapped[float | None] = mapped_column(Float)
+    returns: Mapped[dict | None] = mapped_column(JSON)  # {"1y": %, "3y": %, "5y": %, "10y": %, "since_launch": %}
+    benchmark_returns: Mapped[dict | None] = mapped_column(JSON)
+    raw: Mapped[dict] = mapped_column(JSON)
+
+
+class SchemeLink(Base):
+    """How an external feed's scheme identifier maps to AMFI codes (one row per code and source)."""
+
+    __tablename__ = "scheme_link"
+
+    amfi_code: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    source: Mapped[str] = mapped_column(String(20), primary_key=True)  # ter | performance
+    external_key: Mapped[str] = mapped_column(String(120), index=True)
+    method: Mapped[str] = mapped_column(String(20))  # exact | fuzzy
+    score: Mapped[float] = mapped_column(Float)
+
+
+class Document(Base):
+    """An original document (PDF/Excel/...) kept in full: the file is archived as downloaded and
+    its complete text is stored as ordered, non-overlapping chunks in DocumentChunk."""
+
+    __tablename__ = "document"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    source: Mapped[str] = mapped_column(String(20))  # amfi | sebi | amc
+    doc_type: Mapped[str] = mapped_column(String(30), index=True)  # regulation | circular | faq | monthly_report | sid | kim | factsheet
+    title: Mapped[str] = mapped_column(String(300))
+    url: Mapped[str] = mapped_column(Text, unique=True)
+    published_on: Mapped[date | None] = mapped_column(Date)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    sha256: Mapped[str] = mapped_column(String(64))
+    mime: Mapped[str | None] = mapped_column(String(80))
+    bytes: Mapped[int] = mapped_column(Integer)
+    storage_path: Mapped[str] = mapped_column(Text)
+    pages: Mapped[int | None] = mapped_column(Integer)
+    amc_name: Mapped[str | None] = mapped_column(String(120))
+    amfi_code: Mapped[int | None] = mapped_column(Integer)
+    text_chars: Mapped[int] = mapped_column(Integer, default=0)
+    meta: Mapped[dict | None] = mapped_column(JSON)
+
+
+class DocumentChunk(Base):
+    """Complete document text, split into ordered passages (concatenating them in `seq` order
+    reproduces the full text). On Postgres a generated `tsv` column + GIN index (created in
+    init_db) powers full-text search."""
+
+    __tablename__ = "document_chunk"
+    __table_args__ = (UniqueConstraint("document_id", "seq"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    document_id: Mapped[str] = mapped_column(ForeignKey("document.id", ondelete="CASCADE"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    page_from: Mapped[int | None] = mapped_column(Integer)
+    page_to: Mapped[int | None] = mapped_column(Integer)
+    heading: Mapped[str | None] = mapped_column(String(300))
+    text: Mapped[str] = mapped_column(Text)
+
+
 class CategoryStat(Base):
     """Peer distribution captured by a category ranking run, so a fund outside the universe
     (e.g. a held Direct plan) can be scored without re-reading every peer's NAV history."""

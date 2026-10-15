@@ -68,6 +68,15 @@ def init_db() -> None:
         with engine.begin() as conn:
             conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{_settings.db_schema}"'))
     Base.metadata.create_all(engine)
+    if is_postgres():
+        # Full-text search over document passages: generated tsvector + GIN index.
+        schema = _settings.db_schema
+        with engine.begin() as conn:
+            conn.execute(text(
+                f'ALTER TABLE "{schema}".document_chunk ADD COLUMN IF NOT EXISTS tsv tsvector GENERATED ALWAYS AS '
+                "(setweight(to_tsvector('english', coalesce(heading, '')), 'A') || setweight(to_tsvector('english', text), 'B')) STORED"
+            ))
+            conn.execute(text(f'CREATE INDEX IF NOT EXISTS document_chunk_tsv_idx ON "{schema}".document_chunk USING GIN (tsv)'))
 
 
 def get_db() -> Iterator[Session]:

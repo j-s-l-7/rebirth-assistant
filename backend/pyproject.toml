@@ -13,6 +13,7 @@ dependencies = [
     "psycopg2-binary>=2.9.13",
     "pydantic-settings>=2.16.0",
     "python-multipart>=0.0.32",
+    "rapidfuzz>=3.14",
     "sqlalchemy>=2.1.4",
     "uvicorn[standard]>=0.54.0",
 ]

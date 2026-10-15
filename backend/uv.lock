@@ -938,6 +938,7 @@ dependencies = [
     { name = "psycopg2-binary" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
+    { name = "rapidfuzz" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -957,6 +958,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = ">=2.9.13" },
     { name = "pydantic-settings", specifier = ">=2.16.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "rapidfuzz", specifier = ">=3.14" },
     { name = "sqlalchemy", specifier = ">=2.1.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
