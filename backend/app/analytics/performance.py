@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.analytics.navbook import NavBook
 from app.analytics.portfolio import HoldingView, external_cashflows
 from app.analytics.xirr import cagr, xirr
-from app.models import Scheme, SchemeMetric
+from app.models import CategoryStat, Scheme, SchemeMetric
 from app.reference.categories import BENCHMARK_PROXIES, get_category
 from app.reference.tax import add_months
 
@@ -196,8 +196,72 @@ def rank_category(db: Session, nb: NavBook, category_key: str, as_of: date, extr
         db.execute(delete(SchemeMetric).where(SchemeMetric.amfi_code.in_(codes), SchemeMetric.as_of == as_of, SchemeMetric.model_version == MODEL_VERSION))
         for c, m in metrics.items():
             db.add(SchemeMetric(amfi_code=c, as_of=as_of, model_version=MODEL_VERSION, metrics=m, composite_score=m.get("composite_score"), tier=m.get("tier")))
+        if cat.peer_group:
+            pool = peers & eligible
+            stats = {
+                "rolling_medians": {f"{y}-{mo:02d}": round(v, 6) for (y, mo), v in medians.items()},
+                "peer_factors": {f: [metrics[c][f] for c in pool if metrics[c].get(f) is not None]
+                                 for f in ("consistency", "sortino_3y", "downside_capture_3y", "max_dd_3y")},
+                "peer_composites": sorted(round(composites[p], 3) for p in peers if p in composites),
+                "peer_count": len(peers),
+            }
+            db.execute(delete(CategoryStat).where(CategoryStat.category_key == category_key, CategoryStat.as_of == as_of, CategoryStat.model_version == MODEL_VERSION))
+            db.add(CategoryStat(category_key=category_key, as_of=as_of, model_version=MODEL_VERSION, stats=stats))
         db.commit()
     return metrics
+
+
+def _pct_against(value: float | None, peer_values: list[float] | None, higher_is_better: bool = True) -> float | None:
+    if value is None or not peer_values:
+        return None
+    worse = sum(1 for v in peer_values if (v < value if higher_is_better else v > value))
+    return worse / len(peer_values)
+
+
+def score_against_stats(nb: NavBook, code: int, category_key: str, as_of: date, stats: dict | None) -> dict:
+    """Score one scheme against a cached peer distribution: needs only its own NAVs and its
+    benchmark's, not every peer's. Without stats (or for non-peer categories) it returns the
+    scheme's own metrics with no tier."""
+    m, rolling = scheme_metrics(nb, code, as_of, benchmark_code(category_key))
+    m["model_version"] = MODEL_VERSION
+    m["factors_unavailable"] = FACTORS_UNAVAILABLE
+    m["composite_score"] = None
+    m["tier"] = "new" if m["nav_history_years"] < MIN_TRACK_YEARS else None
+    if not stats or not get_category(category_key).peer_group:
+        return m
+    medians = stats["rolling_medians"]
+    hits = [v >= medians[f"{y}-{mo:02d}"] for (y, mo), v in rolling.items() if f"{y}-{mo:02d}" in medians]
+    m["consistency"] = round(sum(hits) / len(hits), 4) if len(hits) >= 12 else None
+    m["peer_count"] = stats.get("peer_count")
+    if m["tier"] == "new":
+        return m
+    pf = stats["peer_factors"]
+    parts = {}
+    if (p := _pct_against(m.get("consistency"), pf.get("consistency"))) is not None:
+        parts["consistency"] = p
+    if (p := _pct_against(m.get("sortino_3y"), pf.get("sortino_3y"))) is not None:
+        parts["risk_adjusted"] = p
+    down = [x for x in (_pct_against(m.get("downside_capture_3y"), pf.get("downside_capture_3y"), higher_is_better=False),
+                        _pct_against(m.get("max_dd_3y"), pf.get("max_dd_3y"))) if x is not None]
+    if down:
+        parts["downside"] = mean(down)
+    if not parts:
+        return m
+    composite = sum(WEIGHTS[k] * v for k, v in parts.items()) / sum(WEIGHTS[k] for k in parts) * 100
+    peer_scores = stats.get("peer_composites") or []
+    m["composite_score"] = round(composite, 1)
+    m["factor_percentiles"] = {k: round(v, 3) for k, v in parts.items()}
+    m["tier"] = _tier(sum(1 for s in peer_scores if s <= composite) / len(peer_scores)) if peer_scores else None
+    return m
+
+
+def latest_category_stats(db: Session, category_key: str, max_age_days: int = 10) -> dict | None:
+    cutoff = date.today() - timedelta(days=max_age_days)
+    row = db.scalar(
+        select(CategoryStat).where(CategoryStat.category_key == category_key, CategoryStat.model_version == MODEL_VERSION, CategoryStat.as_of >= cutoff)
+        .order_by(CategoryStat.as_of.desc()).limit(1)
+    )
+    return row.stats if row else None
 
 
 def latest_metrics(db: Session, codes: set[int], max_age_days: int = 10) -> dict[int, dict]:
@@ -211,16 +275,33 @@ def latest_metrics(db: Session, codes: set[int], max_age_days: int = 10) -> dict
 
 
 def ensure_metrics(db: Session, nb: NavBook, codes_by_category: dict[str, set[int]], as_of: date) -> dict[int, dict]:
-    """Metrics for the given schemes, computing missing categories on demand."""
+    """Metrics for the given schemes. Cached rows are reused; a missing scheme is scored
+    against its category's cached peer statistics. A whole category is ranked here only
+    when it has never been ranked (e.g. a fresh database before compute-metrics)."""
     out: dict[int, dict] = {}
     all_codes = {c for cs in codes_by_category.values() for c in cs}
     cached = latest_metrics(db, all_codes)
+    fresh: dict[int, dict] = {}
     for cat_key, codes in codes_by_category.items():
-        if codes <= cached.keys():
-            out.update({c: cached[c] for c in codes})
+        out.update({c: cached[c] for c in codes if c in cached})
+        missing = codes - cached.keys()
+        if not missing:
             continue
-        ranked = rank_category(db, nb, cat_key, as_of, extra_codes=codes)
-        out.update({c: ranked[c] for c in codes if c in ranked})
+        peer_group = get_category(cat_key).peer_group
+        stats = latest_category_stats(db, cat_key) if peer_group else None
+        if peer_group and stats is None:
+            ranked = rank_category(db, nb, cat_key, as_of, extra_codes=missing)
+            out.update({c: ranked[c] for c in missing if c in ranked})
+            continue
+        bench = benchmark_code(cat_key)
+        nb.preload(missing | ({bench} if bench else set()))
+        for code in missing:
+            fresh[code] = out[code] = score_against_stats(nb, code, cat_key, as_of, stats)
+    if fresh:
+        db.execute(delete(SchemeMetric).where(SchemeMetric.amfi_code.in_(fresh), SchemeMetric.as_of == as_of, SchemeMetric.model_version == MODEL_VERSION))
+        db.add_all(SchemeMetric(amfi_code=c, as_of=as_of, model_version=MODEL_VERSION, metrics=m, composite_score=m.get("composite_score"), tier=m.get("tier"))
+                   for c, m in fresh.items())
+        db.commit()
     return out
 
 

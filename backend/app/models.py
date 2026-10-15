@@ -166,6 +166,20 @@ class SchemeMetric(Base):
     tier: Mapped[str | None] = mapped_column(String(12))  # core | satellite | watch | exit
 
 
+class CategoryStat(Base):
+    """Peer distribution captured by a category ranking run, so a fund outside the universe
+    (e.g. a held Direct plan) can be scored without re-reading every peer's NAV history."""
+
+    __tablename__ = "category_stat"
+    __table_args__ = (UniqueConstraint("category_key", "as_of", "model_version"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    category_key: Mapped[str] = mapped_column(String(40), index=True)
+    as_of: Mapped[date] = mapped_column(Date)
+    model_version: Mapped[str] = mapped_column(String(20))
+    stats: Mapped[dict] = mapped_column(JSON)
+
+
 # --------------------------------------------------------------------------- portfolio
 
 

@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analytics.navbook import NavBook
-from app.analytics.performance import benchmark_code, benchmark_label, latest_metrics, rank_category, scheme_metrics
+from app.analytics.performance import benchmark_label, ensure_metrics
 from app.api.deps import get_investor
 from app.config import get_settings
 from app.copilot.compliance import DISCLOSURE_TEXT
@@ -96,9 +96,7 @@ def scheme_detail(amfi_code: int, db: Session = Depends(get_db)):
     latest = nb.latest(amfi_code)
     as_of = latest[0] if latest else None
     cat = get_category(s.category_key)
-    m = latest_metrics(db, {amfi_code}).get(amfi_code)
-    if m is None and as_of:
-        m = rank_category(db, nb, s.category_key, as_of, extra_codes={amfi_code}).get(amfi_code) if cat.peer_group else scheme_metrics(nb, amfi_code, as_of, benchmark_code(s.category_key))[0]
+    m = ensure_metrics(db, nb, {s.category_key: {amfi_code}}, as_of).get(amfi_code) if as_of else None
     return {"amfi_code": s.amfi_code, "name": s.name, "amc": s.amc_name, "category": cat.label, "plan": s.plan_type, "option": s.option_type,
             "riskometer": RISK_LABELS.get(s.riskometer), "riskometer_basis": s.riskometer_source, "nav": latest[1] if latest else None,
             "nav_date": as_of.isoformat() if as_of else None, "benchmark_proxy": benchmark_label(s.category_key), "metrics": m,

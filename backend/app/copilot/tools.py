@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analytics.lots import redemption_estimate
-from app.analytics.performance import benchmark_code, benchmark_label, latest_metrics, rank_category, scheme_metrics
+from app.analytics.performance import benchmark_code, benchmark_label, ensure_metrics, scheme_metrics
 from app.config import get_settings
 from app.insights.goals import goal_plan
 from app.insights.nudges import nudges
@@ -162,9 +162,7 @@ class ToolContext:
         cat = get_category(s.category_key)
         nb = self.analysis.nb
         as_of = self.analysis.as_of
-        m = latest_metrics(self.db, {s.amfi_code}).get(s.amfi_code)
-        if m is None and cat.peer_group:
-            m = rank_category(self.db, nb, s.category_key, as_of, extra_codes={s.amfi_code}).get(s.amfi_code)
+        m = ensure_metrics(self.db, nb, {s.category_key: {s.amfi_code}}, as_of).get(s.amfi_code)
         if m is None:
             m, _ = scheme_metrics(nb, s.amfi_code, as_of, benchmark_code(s.category_key))
         latest = nb.latest(s.amfi_code)

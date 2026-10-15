@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.analytics.navbook import NavBook
 from app.analytics.overlap import overlap_report
-from app.analytics.performance import ensure_metrics, shadow_benchmark
+from app.analytics.performance import benchmark_code, ensure_metrics, shadow_benchmark
 from app.analytics.portfolio import PortfolioView, build_portfolio
 from app.analytics.score import compute_score
 from app.models import Investor, RiskProfile
@@ -50,6 +50,7 @@ def analyse(db: Session, investor: Investor, with_metrics: bool = True) -> Analy
             by_cat[h.scheme.category_key].add(h.code)
         metrics = ensure_metrics(db, nb, by_cat, pv.as_of)
 
+    nb.preload({b for h in pv.holdings if (b := benchmark_code(h.scheme.category_key))})
     for h in pv.holdings:
         cat = get_category(h.scheme.category_key)
         m = metrics.get(h.code) or {}

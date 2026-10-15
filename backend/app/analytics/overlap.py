@@ -28,7 +28,9 @@ def _latest_weights(db: Session, code: int) -> dict[str, tuple[str, str | None, 
 
 def overlap_report(db: Session, pv: PortfolioView) -> dict:
     equity = [h for h in pv.holdings if h.category.mix.get("equity", 0) >= 0.65]
-    weights = {h.code: _latest_weights(db, h.code) for h in equity}
+    codes = [h.code for h in equity]
+    has_data = bool(codes) and db.scalar(select(SchemeHolding.amfi_code).where(SchemeHolding.amfi_code.in_(codes)).limit(1)) is not None
+    weights = {h.code: _latest_weights(db, h.code) if has_data else {} for h in equity}
     pairs, sectors = [], defaultdict(float)
     for a, b in combinations(equity, 2):
         wa, wb = weights[a.code], weights[b.code]

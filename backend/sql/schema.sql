@@ -15,6 +15,18 @@ CREATE TABLE audit_log (
 	PRIMARY KEY (id)
 );
 
+CREATE TABLE category_stat (
+	id VARCHAR(32) NOT NULL, 
+	category_key VARCHAR(40) NOT NULL, 
+	as_of DATE NOT NULL, 
+	model_version VARCHAR(20) NOT NULL, 
+	stats JSON NOT NULL, 
+	PRIMARY KEY (id), 
+	UNIQUE (category_key, as_of, model_version)
+);
+
+CREATE INDEX ix_category_stat_category_key ON category_stat (category_key);
+
 CREATE TABLE investor (
 	id VARCHAR(32) NOT NULL, 
 	display_name VARCHAR(120) NOT NULL, 
@@ -49,12 +61,12 @@ CREATE TABLE scheme (
 	PRIMARY KEY (amfi_code)
 );
 
-CREATE INDEX ix_scheme_name ON scheme (name);
 CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
 CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
 CREATE INDEX ix_scheme_category_key ON scheme (category_key);
 CREATE INDEX ix_scheme_isin_reinvest ON scheme (isin_reinvest);
 CREATE INDEX ix_scheme_isin_growth ON scheme (isin_growth);
+CREATE INDEX ix_scheme_name ON scheme (name);
 
 CREATE TABLE chat_session (
 	id VARCHAR(32) NOT NULL, 

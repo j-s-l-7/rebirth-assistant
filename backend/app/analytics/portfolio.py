@@ -167,6 +167,7 @@ def build_portfolio(db: Session, investor: Investor, navbook: NavBook | None = N
         by_code_hold[h.amfi_code].append(h)
 
     codes = set(by_code_hold) | set(by_code_txns)
+    schemes = {s.amfi_code: s for s in db.scalars(select(Scheme).where(Scheme.amfi_code.in_(codes)))} if codes else {}
     navbook.preload(codes)
     latest_dates = [navbook.latest(c)[0] for c in codes if navbook.latest(c)]
     as_of = as_of or (max(latest_dates) if latest_dates else date.today())
@@ -179,7 +180,7 @@ def build_portfolio(db: Session, investor: Investor, navbook: NavBook | None = N
     cash_like = day_change = 0.0
 
     for code in sorted(codes):
-        scheme = db.get(Scheme, code)
+        scheme = schemes.get(code)
         if scheme is None:
             continue
         stxns = by_code_txns.get(code, [])

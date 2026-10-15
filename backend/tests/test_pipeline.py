@@ -76,3 +76,30 @@ def test_no_recommendations_without_risk_profile(db, market):
     import_cas_data(db, inv, cas_dict(market, pan="LMNOP4321Q"))
     run = run_recommendations(db, analyse(db, inv))
     assert [i.card["action"] for i in run.items] == ["COMPLETE_RISK_PROFILE"]
+
+
+def test_out_of_universe_fund_scored_from_cached_peer_stats(db, market, monkeypatch):
+    """A held fund outside the universe (e.g. a Direct plan) gets a peer tier from the cached
+    category statistics - without re-reading every peer's NAV history."""
+    from app.analytics import performance
+    from app.analytics.navbook import NavBook
+    from app.data.bulk import copy_nav_points
+    from app.models import Scheme
+    from tests.synthetic import walk
+
+    as_of = date(2026, 10, 14)
+    performance.rank_category(db, NavBook(db), "flexi_cap", as_of)  # persists peer stats
+    code = 990001
+    db.add(Scheme(amfi_code=code, name="Test Flexi Cap Fund - Direct Plan - Growth", amc_name="Test AMC 1", raw_category="Flexi",
+                  category_key="flexi_cap", plan_type="direct", option_type="growth", riskometer="very_high", in_universe=False))
+    db.commit()
+    copy_nav_points(db, walk(code, 0.16, 0.17))
+    db.commit()
+
+    def no_rerank(*a, **k):
+        raise AssertionError("ensure_metrics must not re-rank a category that has cached stats")
+
+    monkeypatch.setattr(performance, "rank_category", no_rerank)
+    m = performance.ensure_metrics(db, NavBook(db), {"flexi_cap": {code}}, as_of)[code]
+    assert m["tier"] in ("core", "satellite", "watch", "exit")
+    assert m["composite_score"] is not None and m["consistency"] is not None
