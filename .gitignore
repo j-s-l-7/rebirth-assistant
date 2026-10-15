@@ -1,0 +1,21 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Local data: SQLite database, dev encryption key, CAS uploads (never commit)
+backend/data/
+
+# Eval reports can contain model answers about the demo portfolio
+evals/report*.json
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

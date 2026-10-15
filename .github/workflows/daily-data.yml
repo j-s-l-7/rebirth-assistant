@@ -1,0 +1,43 @@
+name: Daily AMFI refresh
+
+# AMFI publishes NAVs around 23:00 IST; refresh at 23:45 IST (18:15 UTC) on weekdays.
+# Runs against Supabase only when the DATABASE_URL repository secret is set.
+on:
+  schedule:
+    - cron: "15 18 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "First load: download NAV_HISTORY_YEARS of history before the daily refresh"
+        type: boolean
+        default: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        working-directory: ${{ github.workspace }}  # runs before checkout, so backend/ doesn't exist yet
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL secret not set; skipping refresh."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.enabled == 'true'
+      - uses: astral-sh/setup-uv@v6
+        if: steps.cfg.outputs.enabled == 'true'
+      - name: Initial NAV history (manual runs only)
+        if: steps.cfg.outputs.enabled == 'true' && inputs.backfill
+        run: uv run --python 3.12 python -m app.cli sync-schemes && uv run --python 3.12 python -m app.cli sync-history
+      - name: Scheme master, NAVs, gap repair and peer rankings
+        if: steps.cfg.outputs.enabled == 'true'
+        run: uv run --python 3.12 python -m app.cli daily

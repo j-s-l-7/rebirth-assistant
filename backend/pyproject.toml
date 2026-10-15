@@ -1,0 +1,23 @@
+[project]
+name = "ra-backend"
+version = "0.1.0"
+description = "RA (Rebirth Assistant) backend: AMFI data, portfolio analytics, RA Score, recommendation engine and the Claude Fable copilot"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.14.0",
+    "casparser>=1.4.1",
+    "cryptography>=44,<50",
+    "fastapi>=0.143.1",
+    "httpx>=0.28.1",
+    "psycopg2-binary>=2.9.13",
+    "pydantic-settings>=2.16.0",
+    "python-multipart>=0.0.32",
+    "sqlalchemy>=2.1.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

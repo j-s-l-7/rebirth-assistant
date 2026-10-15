@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f7f5f1;
+  --surface: #ffffff;
+  --surface-2: #f0ece5;
+  --ink: #1c1a17;
+  --muted: #6b655e;
+  --line: #e4ded5;
+  --brand: #1f4d3f;
+  --brand-ink: #ffffff;
+  --brand-soft: #e2eee8;
+  --accent: #3ba37a;
+  --good: #2f7d57;
+  --good-soft: #e3f1ea;
+  --warn: #9a6210;
+  --warn-soft: #fbf0dc;
+  --bad: #b4443a;
+  --bad-soft: #f8e5e2;
+  --info: #2d5f8a;
+  --info-soft: #e4eef7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12110f;
+    --surface: #1b1a17;
+    --surface-2: #24221e;
+    --ink: #eeeae4;
+    --muted: #a59e95;
+    --line: #34312c;
+    --brand: #7cc7a5;
+    --brand-ink: #0f1f19;
+    --brand-soft: #1e3229;
+    --accent: #5fc296;
+    --good: #6cc59b;
+    --good-soft: #1b2e25;
+    --warn: #e2b05a;
+    --warn-soft: #33281a;
+    --bad: #ec8a7f;
+    --bad-soft: #3a211e;
+    --info: #8ab8e0;
+    --info-soft: #1c2a37;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #12110f;
+  --surface: #1b1a17;
+  --surface-2: #24221e;
+  --ink: #eeeae4;
+  --muted: #a59e95;
+  --line: #34312c;
+  --brand: #7cc7a5;
+  --brand-ink: #0f1f19;
+  --brand-soft: #1e3229;
+  --accent: #5fc296;
+  --good: #6cc59b;
+  --good-soft: #1b2e25;
+  --warn: #e2b05a;
+  --warn-soft: #33281a;
+  --bad: #ec8a7f;
+  --bad-soft: #3a211e;
+  --info: #8ab8e0;
+  --info-soft: #1c2a37;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-accent: var(--accent);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --font-sans: var(--font-inter);
+  --font-serif: var(--font-fraunces);
+}
+
+html {
+  background: var(--bg);
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes ra-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.ra-dot {
+  animation: ra-pulse 1.2s ease-in-out infinite;
+}
