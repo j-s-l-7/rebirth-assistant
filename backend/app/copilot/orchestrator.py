@@ -223,8 +223,12 @@ async def run_turn(session_factory: sessionmaker, session_id: str, user_text: st
     except anthropic.APIConnectionError:
         yield {"event": "error", "data": {"message": "Couldn't reach the AI service. Check the server's network connection."}}
     except anthropic.APIStatusError as exc:
-        log.exception("Copilot API error")
-        yield {"event": "error", "data": {"message": f"The AI service returned an error ({exc.status_code}). Please try again."}}
+        if "credit balance" in str(exc).lower():
+            log.error("Copilot offline: Anthropic account has no credits (request %s)", getattr(exc, "request_id", None))
+            yield {"event": "error", "data": {"message": "RA's chat is offline: the Anthropic account is out of credits (Console > Plans & Billing)."}}
+        else:
+            log.exception("Copilot API error")
+            yield {"event": "error", "data": {"message": f"The AI service returned an error ({exc.status_code}). Please try again."}}
     except (anthropic.AnthropicError, TypeError) as exc:
         # The SDK raises TypeError when no credentials can be resolved at all.
         if "authentication" in str(exc).lower() or "api_key" in str(exc).lower():
