@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.analytics.fund_lens import compare_funds, fund_lens, resolve_funds
 from app.analytics.lots import redemption_estimate
 from app.config import get_settings
+from app.docs.search import search_documents
 from app.insights.goals import goal_plan
 from app.insights.nudges import nudges
 from app.insights.tax import tax_summary
@@ -43,6 +44,10 @@ class FindInput(_In):
 
 class FundInput(_In):
     fund: str = Field(min_length=2, max_length=120, description="Fund name (e.g. 'Parag Parikh Flexi Cap') or AMFI scheme code")
+
+
+class DocSearchInput(_In):
+    query: str = Field(min_length=3, max_length=200)
 
 
 class CompareInput(_In):
@@ -81,6 +86,7 @@ def _schema(model: type[BaseModel]) -> dict:
 TOOL_SPECS: list[tuple[str, str, type[BaseModel], str]] = [
     ("fund_lens", "Everything about one mutual fund relative to the other funds in its SEBI category: its rank among category peers, each metric (1/3/5-year returns, consistency, Sortino, volatility, worst fall, downside capture, expense ratio, index-likeness) beside the category median and quartiles with a plain-language standing, a D-profile (performance, consistency, risk, diversification, asset mix, cost), facts (AUM, launch date, minimum investment where loaded) and the category's top funds. Accepts a fund name or AMFI code; returns the matched fund and close alternatives.", FundInput, "Comparing the fund with its category"),
     ("compare_funds", "Side-by-side comparison of 2-4 mutual funds (names or AMFI codes): each fund's category rank and key metrics with the category median and standing. Says whether they share a category (ranks across categories aren't comparable).", CompareInput, "Comparing the funds"),
+    ("search_documents", "Search the full text of stored official documents (AMFI Code of Ethics, AMFI master circular and FAQs for distributors, SEBI FAQs, AMFI monthly industry reports). Returns passages with title, page numbers, date and URL. Use for questions about rules, disclosures or industry data; quote briefly and cite title and page.", DocSearchInput, "Searching official documents"),
     ("find_funds", "Search mutual fund schemes by name. Returns matching schemes with AMFI code, plan, option and category; Regular-Growth plans in the peer set first.", FindInput, "Finding the fund"),
     ("get_portfolio_overview", "Portfolio totals: current value, invested, gain, XIRR, day change, look-through asset allocation (equity/debt/gold), category/AMC/plan split, active SIPs, gains realised this financial year, and the NAV date the values use.", NoInput, "Reading your portfolio"),
     ("get_holdings", "Every fund the investor holds with value, invested amount, gain, XIRR, weight, category, riskometer, SIP status, peer-ranking tier, performance vs its benchmark on the investor's own cashflows, typical exit load, lock-in and suitability for their risk profile.", HoldingsInput, "Going through your funds"),
@@ -164,6 +170,10 @@ class ToolContext:
         if not matches:
             raise LookupError(f"No mutual fund matches '{fund}'. Try find_funds with a shorter name.")
         return matches[0]["amfi_code"], [m for m in matches[1:4] if m["name"] != matches[0]["name"]]
+
+    def _t_search_documents(self, a: DocSearchInput) -> dict:
+        results = search_documents(self.db, a.query, limit=5)
+        return {"results": results} if results else {"results": [], "message": "No stored document matches; answer from general knowledge only if it's not a factual claim, or say you don't have the source."}
 
     def _t_find_funds(self, a: FindInput) -> dict:
         return {"matches": resolve_funds(self.db, a.query, limit=8)}

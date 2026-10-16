@@ -10,7 +10,7 @@ Local dev/tests: SQLite file (no schema support, so the schema map is skipped).
 from collections.abc import Iterator
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -68,6 +68,7 @@ def init_db() -> None:
         with engine.begin() as conn:
             conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{_settings.db_schema}"'))
     Base.metadata.create_all(engine)
+    _add_missing_columns()
     if is_postgres():
         # Full-text search over document passages: generated tsvector + GIN index.
         schema = _settings.db_schema
@@ -77,6 +78,24 @@ def init_db() -> None:
                 "(setweight(to_tsvector('english', coalesce(heading, '')), 'A') || setweight(to_tsvector('english', text), 'B')) STORED"
             ))
             conn.execute(text(f'CREATE INDEX IF NOT EXISTS document_chunk_tsv_idx ON "{schema}".document_chunk USING GIN (tsv)'))
+
+
+def _add_missing_columns() -> None:
+    """create_all doesn't alter existing tables: add any nullable model column a table lacks
+    (lightweight forward-only migration for additive changes)."""
+    insp = inspect(engine)
+    schema = _settings.db_schema if is_postgres() else None
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name, schema=schema):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table.name, schema=schema)}
+        for col in table.columns:
+            if col.name in existing or not col.nullable:
+                continue
+            ddl_type = col.type.compile(dialect=engine.dialect)
+            target = f'"{schema}"."{table.name}"' if schema else f'"{table.name}"'
+            with engine.begin() as conn:
+                conn.execute(text(f'ALTER TABLE {target} ADD COLUMN "{col.name}" {ddl_type}'))
 
 
 def get_db() -> Iterator[Session]:

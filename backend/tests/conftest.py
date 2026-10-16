@@ -7,6 +7,7 @@ _TMP = Path(tempfile.mkdtemp(prefix="ra-tests-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP / 'test.db'}"
 os.environ["FIELD_ENCRYPTION_KEY"] = __import__("cryptography.fernet").fernet.Fernet.generate_key().decode()
 os.environ.pop("ANTHROPIC_API_KEY", None)
+os.environ["COPILOT_PROVIDER"] = "anthropic"  # tests drive the Claude path with a fake client
 
 import pytest  # noqa: E402
 

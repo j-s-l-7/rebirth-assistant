@@ -24,11 +24,11 @@ export default function Markdown({ text }: { text: string }) {
     const items = list.items.map((it, i) => <li key={i}>{inline(it)}</li>);
     blocks.push(
       list.ordered ? (
-        <ol key={`l${blocks.length}`} className="list-decimal pl-5 space-y-1">
+        <ol key={`l${blocks.length}`} className="list-decimal pl-5 space-y-2 marker:text-muted">
           {items}
         </ol>
       ) : (
-        <ul key={`l${blocks.length}`} className="list-disc pl-5 space-y-1">
+        <ul key={`l${blocks.length}`} className="list-disc pl-5 space-y-2 marker:text-muted">
           {items}
         </ul>
       ),
@@ -65,5 +65,5 @@ export default function Markdown({ text }: { text: string }) {
   }
   flushPara();
   flushList();
-  return <div className="space-y-3 leading-relaxed">{blocks}</div>;
+  return <div className="space-y-4 leading-relaxed text-pretty wrap-anywhere">{blocks}</div>;
 }

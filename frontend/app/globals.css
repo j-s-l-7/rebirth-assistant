@@ -93,10 +93,17 @@ html {
   color-scheme: light dark;
 }
 
-body {
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-inter), system-ui, sans-serif;
+/* Light-only app: keep browser-drawn UI (scrollbars, form controls, autofill) light too. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* While the standalone /chat window is on screen (ChatShell sets the class) the page behind it is
+   pure white too and never scrolls, so no off-white strip can show on overscroll. */
+html.ra-chat,
+html.ra-chat body {
+  background: var(--surface);
+  overflow: hidden;
 }
 
 .num {
@@ -115,4 +122,29 @@ body {
 
 .ra-dot {
   animation: ra-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ra-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ra-fade-in {
+  animation: ra-fade-in 0.4s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ra-dot {
+    animation: none;
+    opacity: 0.7;
+  }
+  .ra-fade-in {
+    animation: none;
+  }
 }

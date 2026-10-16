@@ -42,7 +42,8 @@ def get_client() -> anthropic.AsyncAnthropic:
 
 def new_session(db: Session, investor: Investor) -> ChatSession:
     s = get_settings()
-    session = ChatSession(investor_id=investor.id, system_prompt=build_system_prompt(date.today()), prompt_version=PROMPT_VERSION, model=s.copilot_model)
+    model = s.openai_model if s.copilot_provider == "openai" else s.copilot_model
+    session = ChatSession(investor_id=investor.id, system_prompt=build_system_prompt(date.today()), prompt_version=PROMPT_VERSION, model=model)
     db.add(session)
     db.commit()
     return session
@@ -65,10 +66,21 @@ class Turn:
         self.seq = (db.scalar(select(func.max(ChatMessage.seq)).where(ChatMessage.session_id == session.id)) or 0)
         self.turn_rows: list[ChatMessage] = []
         self.tool_log: list[dict] = []
+        self.openai = is_openai_model(session.model)
+        self.verdict: dict = {}
+        self.ticket: str | None = None
 
     def history(self) -> list[dict]:
         rows = self.db.scalars(select(ChatMessage).where(ChatMessage.session_id == self.session.id).order_by(ChatMessage.seq)).all()
+        if self.openai:
+            return [r.api_content for r in rows if r.api_content is not None]
         return [{"role": r.role, "content": r.api_content} for r in rows if r.api_content is not None]
+
+    def wrap_user(self, text: str):
+        return {"role": "user", "content": text} if self.openai else text
+
+    def wrap_system(self, text: str):
+        return {"role": "system", "content": text} if self.openai else text
 
     def append(self, role: str, api_content, **fields) -> ChatMessage:
         self.seq += 1
@@ -103,6 +115,54 @@ class Turn:
         return kw
 
 
+def is_openai_model(model: str) -> bool:
+    return model.startswith(("gpt-", "o1", "o3", "o4", "chatgpt"))
+
+
+async def open_turn(turn: "Turn", user_text: str, client) -> AsyncIterator[dict]:
+    """Classify, record the investor's message and any guardrail note; yields status events.
+    Leaves the verdict and ticket on the turn."""
+    turn.verdict = await classify(client, user_text, turn.last_visible_assistant_text())
+    turn.append("user", turn.wrap_user(user_text), display_text=user_text, visible=True, guardrail=turn.verdict)
+    if turn.session.title == "New conversation":
+        turn.session.title = user_text[:80]
+        turn.db.commit()
+    turn.ticket = None
+    if turn.verdict["route"] == "escalate":
+        esc = Escalation(investor_id=turn.investor.id, session_id=turn.session.id, category=turn.verdict.get("topic", "other"), reason=user_text[:1000])
+        turn.db.add(esc)
+        turn.db.commit()
+        turn.ticket = esc.id
+        yield {"event": "status", "data": {"text": "Bringing in a human expert", "escalation_id": turn.ticket}}
+    note = system_note(turn.verdict, turn.ticket)
+    if note:
+        turn.append("system", turn.wrap_system(note), visible=False)
+
+
+def finish_turn(turn: "Turn", user_text: str, verdict: dict, ticket: str | None, tools_used: set[str], text_parts: list[str], model: str) -> dict:
+    """Compliance post-processing, number tracing and audit for the turn's final answer;
+    returns the `done` event."""
+    db, settings = turn.db, turn.settings
+    raw_text = "\n\n".join(p.strip() for p in text_parts if p and p.strip())
+    display, flags, disclosures = post_process(raw_text, tools_used)
+    untraced = untraced_numbers(raw_text, sources_from_tool_calls(turn.tool_log, user_text)) if turn.tool_log else []
+
+    last = next(r for r in reversed(turn.turn_rows) if r.role == "assistant")
+    last.display_text = display
+    last.visible = True
+    last.disclosures = disclosures
+    last.cards = turn.ctx.cards or None
+    last.reco_run_id = turn.ctx.reco_run_id
+    last.guardrail = {"compliance_flags": flags, "untraced_numbers": untraced, "classifier": verdict}
+    if turn.ctx.reco_run_id:
+        db.add(AuditLog(actor_type="ai", actor_id=turn.investor.id, action="recommendation_explained", entity_name="reco_run", entity_id=turn.ctx.reco_run_id,
+                        payload={"session_id": turn.session.id, "message_id": last.id, "model": model, "prompt_version": turn.session.prompt_version,
+                                 "disclosures": disclosures, "euin": settings.euin, "compliance_flags": flags}))
+    db.commit()
+    return {"event": "done", "data": {"message_id": last.id, "text": display, "disclosures": disclosures, "cards": turn.ctx.cards,
+                                      "escalation_id": ticket or turn.ctx.escalation_id, "model": model}}
+
+
 async def run_turn(session_factory: sessionmaker, session_id: str, user_text: str) -> AsyncIterator[dict]:
     """Yields events: status, text, cards, done, error."""
     db = session_factory()
@@ -113,24 +173,16 @@ async def run_turn(session_factory: sessionmaker, session_id: str, user_text: st
             return
         investor = db.get(Investor, session.investor_id)
         turn = Turn(db, session, investor)
+        if is_openai_model(session.model):
+            from app.copilot.openai_orchestrator import run_turn_openai
+
+            async for ev in run_turn_openai(turn, user_text):
+                yield ev
+            return
         client = get_client()
-
-        verdict = await classify(client, user_text, turn.last_visible_assistant_text())
-        turn.append("user", user_text, display_text=user_text, visible=True, guardrail=verdict)
-        if session.title == "New conversation":
-            session.title = user_text[:80]
-            db.commit()
-
-        ticket = None
-        if verdict["route"] == "escalate":
-            esc = Escalation(investor_id=investor.id, session_id=session.id, category=verdict.get("topic", "other"), reason=user_text[:1000])
-            db.add(esc)
-            db.commit()
-            ticket = esc.id
-            yield {"event": "status", "data": {"text": "Bringing in a human expert", "escalation_id": ticket}}
-        note = system_note(verdict, ticket)
-        if note:
-            turn.append("system", note, visible=False)
+        async for ev in open_turn(turn, user_text, client):
+            yield ev
+        verdict, ticket = turn.verdict, turn.ticket
 
         messages = turn.history()
         tools_used: set[str] = set()
@@ -198,24 +250,7 @@ async def run_turn(session_factory: sessionmaker, session_id: str, user_text: st
         for r in turn.turn_rows:
             if r.role == "assistant" and isinstance(r.api_content, list):
                 text_parts += [b.get("text", "") for b in r.api_content if b.get("type") == "text"]
-        raw_text = "\n\n".join(p.strip() for p in text_parts if p.strip())
-        display, flags, disclosures = post_process(raw_text, tools_used)
-        untraced = untraced_numbers(raw_text, sources_from_tool_calls(turn.tool_log, user_text)) if turn.tool_log else []
-
-        last = next(r for r in reversed(turn.turn_rows) if r.role == "assistant")
-        last.display_text = display
-        last.visible = True
-        last.disclosures = disclosures
-        last.cards = turn.ctx.cards or None
-        last.reco_run_id = turn.ctx.reco_run_id
-        last.guardrail = {"compliance_flags": flags, "untraced_numbers": untraced, "classifier": verdict}
-        if turn.ctx.reco_run_id:
-            db.add(AuditLog(actor_type="ai", actor_id=investor.id, action="recommendation_explained", entity_name="reco_run", entity_id=turn.ctx.reco_run_id,
-                            payload={"session_id": session.id, "message_id": last.id, "model": final.model, "prompt_version": session.prompt_version,
-                                     "disclosures": disclosures, "euin": turn.settings.euin, "compliance_flags": flags}))
-        db.commit()
-        yield {"event": "done", "data": {"message_id": last.id, "text": display, "disclosures": disclosures, "cards": turn.ctx.cards,
-                                         "escalation_id": ticket or turn.ctx.escalation_id, "model": final.model}}
+        yield finish_turn(turn, user_text, verdict, ticket, tools_used, text_parts, final.model)
     except anthropic.AuthenticationError:
         yield {"event": "error", "data": {"message": "The copilot isn't connected yet: set ANTHROPIC_API_KEY on the server."}}
     except anthropic.RateLimitError:

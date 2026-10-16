@@ -2,6 +2,8 @@
 
 Next.js 16 (App Router) client for the RA backend. Pages: onboarding (`/`), portfolio (`/dashboard`), Ask RA (`/chat`), suggestions (`/recommendations`), tax (`/tax`), CAS import (`/import`), risk profile (`/profile`).
 
+Layout: `app/layout.tsx` is the document shell only (light theme). `app/(site)/` adds the nav and compliance footer around every page except `/chat`, which lives in `app/(chat)/` as a standalone white chat window (`components/chat/`); it opens a Guest investor automatically when none is selected.
+
 ```bash
 npm install
 cp .env.example .env.local   # NEXT_PUBLIC_API_URL defaults to http://localhost:8000/api

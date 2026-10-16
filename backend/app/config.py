@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     copilot_effort: str = "medium"
     guardrail_model: str = "claude-haiku-5-5"
     copilot_max_tool_rounds: int = 8
+    # anthropic | openai. New chat sessions use this provider; existing sessions keep theirs.
+    copilot_provider: str = "anthropic"
+    openai_model: str = "gpt-5.5"
+    openai_max_tokens: int = 2000
     copilot_refusal_fallbacks: bool = True
 
     # Security: field-level encryption for PAN (Fernet key) and an HMAC pepper for lookups.

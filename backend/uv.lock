@@ -568,6 +568,23 @@ wheels = [
 ]
 
 [[package]]
+name = "openai"
+version = "3.31.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/99/d0c5b9e60eb131bfe5f6f818e9b25650b64004ff84512c0f7e00a246b826/openai-3.31.0.tar.gz", hash = "sha256:58110edba9acaf29cb2a675a1cbcccdd9f2fdb4932baed474dc847a7639e5d02", size = 2117207, upload-time = "2026-10-14T05:39:33.445Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/22/66014c8fede0aa2b3381cf80c5102219b78657b3e61776cdab8f0b78675a/openai-3.31.0-py3-none-any.whl", hash = "sha256:e5839f6670483f368de40ce3422f524c1afaf12ff8660539f53489e200db8d78", size = 2235454, upload-time = "2026-10-14T05:39:31.197Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.45.1"
 source = { registry = "https://pypi.org/simple" }
@@ -935,8 +952,10 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "openai" },
     { name = "psycopg2-binary" },
     { name = "pydantic-settings" },
+    { name = "pypdfium2" },
     { name = "python-multipart" },
     { name = "rapidfuzz" },
     { name = "sqlalchemy" },
@@ -955,8 +974,10 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44,<50" },
     { name = "fastapi", specifier = ">=0.143.1" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "openai", specifier = ">=3.31.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.13" },
     { name = "pydantic-settings", specifier = ">=2.16.0" },
+    { name = "pypdfium2", specifier = ">=5.14.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "rapidfuzz", specifier = ">=3.14" },
     { name = "sqlalchemy", specifier = ">=2.1.4" },

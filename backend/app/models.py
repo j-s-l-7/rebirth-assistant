@@ -210,6 +210,11 @@ class SchemeTer(Base):
     d_transaction: Mapped[float | None] = mapped_column(Float)
     d_statutory: Mapped[float | None] = mapped_column(Float)
     d_ter: Mapped[float | None] = mapped_column(Float)
+    # Pre-April-2026 layout: additional expenses under SEBI Reg. 52(6A)(b) and 52(6A)(c).
+    r_6a_b: Mapped[float | None] = mapped_column(Float)
+    r_6a_c: Mapped[float | None] = mapped_column(Float)
+    d_6a_b: Mapped[float | None] = mapped_column(Float)
+    d_6a_c: Mapped[float | None] = mapped_column(Float)
 
 
 class SchemePerformance(Base):

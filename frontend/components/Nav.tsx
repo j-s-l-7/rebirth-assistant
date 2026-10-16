@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { useInvestorId } from "@/lib/investor";
+import { adoptInvestorFromLink, useInvestorId } from "@/lib/investor";
 
 const LINKS = [
   { href: "/dashboard", label: "Portfolio" },
@@ -26,18 +26,12 @@ export function Logo({ size = 28 }: { size?: number }) {
 
 export default function Nav() {
   const pathname = usePathname();
-  const [investorId, setInvestorId] = useInvestorId();
+  const [investorId] = useInvestorId();
 
   // Shareable demo links: any page accepts ?investor=<id> and remembers it.
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const fromLink = url.searchParams.get("investor");
-    if (fromLink) {
-      setInvestorId(fromLink);
-      url.searchParams.delete("investor");
-      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
-    }
-  }, [setInvestorId]);
+    adoptInvestorFromLink();
+  }, []);
   return (
     <header className="border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
