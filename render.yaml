@@ -1,0 +1,30 @@
+# Render Blueprint for RA's API (Dashboard -> New -> Blueprint -> this repo).
+# The chat page itself is static and lives on jayeshluthra.com/rebirth/ (GitHub Pages).
+services:
+  - type: web
+    name: rebirth-assistant-api
+    runtime: docker
+    region: singapore          # next to the Supabase database (ap-southeast-1)
+    plan: free                 # sleeps after 15 min idle; "starter" keeps it awake
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass   # deploy a push to main only after CI passes
+    envVars:
+      - key: DATABASE_URL           # Supabase session pooler URI
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: COPILOT_PROVIDER
+        value: openai
+      - key: OPENAI_MODEL
+        value: gpt-5.5
+      - key: REQUIRE_ACCESS
+        value: "true"
+      - key: ACCESS_TOKEN_SECRET
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://jayeshluthra.com,https://www.jayeshluthra.com
