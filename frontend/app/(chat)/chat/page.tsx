@@ -6,7 +6,7 @@ import EmptyState from "@/components/chat/EmptyState";
 import Message from "@/components/chat/Message";
 import { useChat } from "@/components/chat/useChat";
 import { useStickToBottom } from "@/components/chat/useStickToBottom";
-import { Logo } from "@/components/Nav";
+import { Logo } from "@/components/Logo";
 
 /** A plain chat window: ask about any mutual fund, get a short answer. Nothing else. */
 export default function ChatPage() {

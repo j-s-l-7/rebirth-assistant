@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_investor
-from app.copilot.compliance import DISCLOSURE_TEXT
 from app.copilot.orchestrator import new_session, run_turn
 from app.db import SessionLocal, get_db
 from app.models import ChatMessage, ChatSession, Investor
@@ -32,7 +31,7 @@ def list_messages(session_id: str, db: Session = Depends(get_db)):
     if db.get(ChatSession, session_id) is None:
         raise HTTPException(404, "Conversation not found")
     rows = db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id, ChatMessage.visible.is_(True)).order_by(ChatMessage.seq))
-    return [{"id": m.id, "role": m.role, "text": m.display_text, "cards": m.cards or [], "disclosures": m.disclosures or [],
+    return [{"id": m.id, "role": m.role, "text": m.display_text, "disclosures": m.disclosures or [],
              "created_at": m.created_at.isoformat()} for m in rows]
 
 
@@ -48,7 +47,3 @@ async def send_message(session_id: str, body: MessageIn):
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-
-@router.get("/chat/disclosures")
-def disclosures():
-    return DISCLOSURE_TEXT

@@ -28,8 +28,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export type ChatEvent =
   | { event: "status"; data: { text: string; escalation_id?: string } }
   | { event: "text"; data: { delta: string } }
-  | { event: "cards"; data: { cards: import("./types").RecoCard[] } }
-  | { event: "done"; data: { text: string; disclosures: string[]; cards: import("./types").RecoCard[]; escalation_id?: string | null } }
+  | { event: "done"; data: { text: string; disclosures: string[]; escalation_id?: string | null } }
   | { event: "error"; data: { message: string } };
 
 /** POST a chat message and yield server-sent events as they arrive. */

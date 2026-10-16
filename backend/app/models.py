@@ -20,7 +20,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
@@ -61,48 +61,6 @@ class Investor(Base):
     tax_slab_pct: Mapped[float | None] = mapped_column(Float)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-
-    folios: Mapped[list["Folio"]] = relationship(back_populates="investor", cascade="all, delete-orphan")
-    goals: Mapped[list["Goal"]] = relationship(back_populates="investor", cascade="all, delete-orphan")
-
-
-class Consent(Base):
-    __tablename__ = "consent"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    investor_id: Mapped[str] = mapped_column(ForeignKey("investor.id", ondelete="CASCADE"), index=True)
-    purpose: Mapped[str] = mapped_column(String(40))  # import_analysis | ai_processing | marketing
-    notice_version: Mapped[str] = mapped_column(String(20))
-    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class RiskProfile(Base):
-    __tablename__ = "risk_profile"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    investor_id: Mapped[str] = mapped_column(ForeignKey("investor.id", ondelete="CASCADE"), index=True)
-    questionnaire_version: Mapped[str] = mapped_column(String(20))
-    answers: Mapped[dict] = mapped_column(JSON)
-    score: Mapped[int] = mapped_column(Integer)
-    bucket: Mapped[str] = mapped_column(String(32))
-    horizon_years: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    valid_till: Mapped[date] = mapped_column(Date)
-
-
-class Goal(Base):
-    __tablename__ = "goal"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    investor_id: Mapped[str] = mapped_column(ForeignKey("investor.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(80))
-    target_amount: Mapped[float] = mapped_column(Money())
-    target_date: Mapped[date] = mapped_column(Date)
-    current_allocated: Mapped[float] = mapped_column(Money(), default=0.0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-
-    investor: Mapped[Investor] = relationship(back_populates="goals")
 
 
 # --------------------------------------------------------------------------- market data
@@ -306,110 +264,7 @@ class CategoryStat(Base):
     stats: Mapped[dict] = mapped_column(JSON)
 
 
-# --------------------------------------------------------------------------- portfolio
-
-
-class ImportJob(Base):
-    __tablename__ = "import_job"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    investor_id: Mapped[str] = mapped_column(ForeignKey("investor.id", ondelete="CASCADE"), index=True)
-    source: Mapped[str] = mapped_column(String(20))  # cas_pdf | demo
-    status: Mapped[str] = mapped_column(String(20))  # parsing | done | failed
-    parser_version: Mapped[str | None] = mapped_column(String(40))
-    statement_from: Mapped[date | None] = mapped_column(Date)
-    statement_to: Mapped[date | None] = mapped_column(Date)
-    summary: Mapped[dict | None] = mapped_column(JSON)
-    exceptions: Mapped[list | None] = mapped_column(JSON)
-    error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-
-
-class Folio(Base):
-    __tablename__ = "folio"
-    __table_args__ = (UniqueConstraint("investor_id", "amc_name", "folio_no"),)
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    investor_id: Mapped[str] = mapped_column(ForeignKey("investor.id", ondelete="CASCADE"), index=True)
-    amc_name: Mapped[str] = mapped_column(String(120))
-    folio_no: Mapped[str] = mapped_column(String(40))
-    source: Mapped[str] = mapped_column(String(20))
-
-    investor: Mapped[Investor] = relationship(back_populates="folios")
-    holdings: Mapped[list["Holding"]] = relationship(back_populates="folio", cascade="all, delete-orphan")
-    txns: Mapped[list["Txn"]] = relationship(back_populates="folio", cascade="all, delete-orphan")
-
-
-class Holding(Base):
-    """Closing position per folio+scheme as of the statement date."""
-
-    __tablename__ = "holding"
-    __table_args__ = (UniqueConstraint("folio_id", "amfi_code"),)
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    folio_id: Mapped[str] = mapped_column(ForeignKey("folio.id", ondelete="CASCADE"), index=True)
-    amfi_code: Mapped[int] = mapped_column(ForeignKey("scheme.amfi_code"), index=True)
-    units: Mapped[float] = mapped_column(Units())
-    cost_value: Mapped[float | None] = mapped_column(Money())
-    statement_value: Mapped[float | None] = mapped_column(Money())
-    as_of: Mapped[date] = mapped_column(Date)
-
-    folio: Mapped[Folio] = relationship(back_populates="holdings")
-    scheme: Mapped[Scheme] = relationship()
-
-
-class Txn(Base):
-    __tablename__ = "txn"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    folio_id: Mapped[str] = mapped_column(ForeignKey("folio.id", ondelete="CASCADE"), index=True)
-    amfi_code: Mapped[int] = mapped_column(ForeignKey("scheme.amfi_code"), index=True)
-    import_job_id: Mapped[str | None] = mapped_column(ForeignKey("import_job.id", ondelete="SET NULL"))
-    txn_type: Mapped[str] = mapped_column(String(32))
-    txn_date: Mapped[date] = mapped_column(Date, index=True)
-    amount: Mapped[float | None] = mapped_column(Money())
-    units: Mapped[float | None] = mapped_column(Units())
-    nav: Mapped[float | None] = mapped_column(Nav())
-    balance: Mapped[float | None] = mapped_column(Units())
-    description: Mapped[str | None] = mapped_column(String(255))
-
-    folio: Mapped[Folio] = relationship(back_populates="txns")
-
-
 # --------------------------------------------------------------------------- advice & chat
-
-
-class RecoRun(Base):
-    __tablename__ = "reco_run"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    investor_id: Mapped[str] = mapped_column(ForeignKey("investor.id", ondelete="CASCADE"), index=True)
-    risk_profile_id: Mapped[str | None] = mapped_column(ForeignKey("risk_profile.id", ondelete="SET NULL"))
-    trigger: Mapped[str] = mapped_column(String(20))  # user | chat | scheduled
-    model_version: Mapped[str] = mapped_column(String(20))
-    inputs: Mapped[dict] = mapped_column(JSON)
-    summary: Mapped[dict] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-
-    items: Mapped[list["RecoItem"]] = relationship(back_populates="run", cascade="all, delete-orphan")
-
-
-class RecoItem(Base):
-    __tablename__ = "reco_item"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
-    run_id: Mapped[str] = mapped_column(ForeignKey("reco_run.id", ondelete="CASCADE"), index=True)
-    action: Mapped[str] = mapped_column(String(24))
-    amfi_code: Mapped[int | None] = mapped_column(Integer)
-    from_amfi_code: Mapped[int | None] = mapped_column(Integer)
-    amount: Mapped[float | None] = mapped_column(Money())
-    priority: Mapped[int] = mapped_column(Integer, default=50)
-    suitability_pass: Mapped[bool] = mapped_column(Boolean, default=True)
-    status: Mapped[str] = mapped_column(String(16), default="open")
-    card: Mapped[dict] = mapped_column(JSON)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-    run: Mapped[RecoRun] = relationship(back_populates="items")
 
 
 class ChatSession(Base):
@@ -443,11 +298,9 @@ class ChatMessage(Base):
     tool_calls: Mapped[list | None] = mapped_column(JSON)
     guardrail: Mapped[dict | None] = mapped_column(JSON)
     disclosures: Mapped[list | None] = mapped_column(JSON)
-    cards: Mapped[list | None] = mapped_column(JSON)
     model: Mapped[str | None] = mapped_column(String(40))
     prompt_version: Mapped[str | None] = mapped_column(String(20))
     usage: Mapped[dict | None] = mapped_column(JSON)
-    reco_run_id: Mapped[str | None] = mapped_column(ForeignKey("reco_run.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

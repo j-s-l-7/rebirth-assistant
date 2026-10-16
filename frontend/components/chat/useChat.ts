@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, streamChat } from "@/lib/api";
-import { adoptInvestorFromLink, getInvestorId, useInvestorId } from "@/lib/investor";
+import { getInvestorId, useInvestorId } from "@/lib/investor";
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
-  /** What RA is doing right now ("Reading your portfolio"), shown while waiting. */
+  /** What RA is doing right now ("Comparing the fund with its category"), shown while waiting. */
   status?: string;
   streaming?: boolean;
   /** `text` holds an error message rather than an answer. */
@@ -92,7 +92,7 @@ export function useChat() {
         return guest;
       };
       openingRef.current = (async () => {
-        let investor = adoptInvestorFromLink() ?? getInvestorId();
+        let investor = getInvestorId();
         let startFresh = fresh;
         if (!investor) {
           investor = await adopt(await createGuest());
@@ -165,7 +165,6 @@ export function useChat() {
             finished = true;
             fail(ev.data.message);
           }
-          // "cards" is ignored on purpose: this window is text only.
         }
         if (!finished) fail("The connection was interrupted.");
       } catch (e) {

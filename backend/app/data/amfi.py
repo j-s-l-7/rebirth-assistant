@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.data.bulk import copy_nav_points, upsert
-from app.models import Holding, NavPoint, Scheme, SchemeDetail
+from app.models import NavPoint, Scheme, SchemeDetail
 from app.reference.categories import (
     BENCHMARK_PROXIES,
     EXCLUDED_NAME,
@@ -237,10 +237,8 @@ def sync_scheme_master(db: Session) -> dict:
 
 
 def tracked_codes(db: Session) -> set[int]:
-    """Schemes whose NAV history we keep: investable universe + anything held + proxies."""
-    codes = set(db.scalars(select(Scheme.amfi_code).where(Scheme.in_universe.is_(True) | Scheme.is_benchmark_proxy.is_(True))))
-    codes |= set(db.scalars(select(Holding.amfi_code).distinct()))
-    return codes
+    """Schemes whose NAV history we keep: the investable universe + benchmark proxies."""
+    return set(db.scalars(select(Scheme.amfi_code).where(Scheme.in_universe.is_(True) | Scheme.is_benchmark_proxy.is_(True))))
 
 
 class EmptyWindow(ValueError):

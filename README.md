@@ -1,35 +1,80 @@
 # RA — Rebirth Assistant
 
-An AI mutual-fund companion for Indian investors. Import every fund you own from one CAS statement, see an explainable **RA Score**, get suitability-checked suggestions with tax-aware sequencing, and ask **RA** (powered by Claude Fable 5.1) anything about your portfolio. Built to the [PRD + ERD](#context) for an AMFI-registered Mutual Fund Distributor.
+A single, clean chat window for Indian mutual funds. Ask about **any fund** and RA answers in a few plain sentences: where it ranks among the other funds in its SEBI category, and how it stands on performance, consistency, risk, diversification, asset mix and cost (the "D-lens"). Built for an AMFI-registered Mutual Fund Distributor, to the PRD + ERD.
 
+---
 
-## What's in the MVP
+## What it does
 
 | Area | What it does |
 |---|---|
-| **Data** | AMFI scheme master (14k+ schemes, both old and 2026 SEBI category labels) + daily NAVs; 6 years of NAV history for the investable universe (~1,630 open-ended Regular-Growth schemes, ETFs excluded) from AMFI's own history report, with gap detection/repair. Supabase Postgres (`mf` schema) or local SQLite. |
-| **Import** | CAMS/KFintech CAS PDF via `casparser`, parsed in memory; password never stored; PAN cross-check blocks someone else's statement; ISIN→AMFI mapping with an exceptions list. |
-| **Analytics** | Value, invested, gain, XIRR (portfolio and fund), look-through allocation (hybrids split into equity/debt/gold), FIFO tax lots, SIP detection, overlap (disclosure-based when loaded). |
-| **Fund ranking** | Within each SEBI category: 3-yr rolling-return consistency vs peers, 3-yr Sortino, downside capture and max drawdown → Core / Satellite / Watch / Exit tiers (`rank-v0.1`). |
-| **RA Score** | Six explainable dimensions (below), each with a one-line reason and what would raise it. Dimensions without data say "not scored" instead of guessing. |
-| **Recommendations** | Diagnosis rules → action cards (switch, redirect SIP, STP, start SIP, review) behind a suitability gate, with tax and exit-load estimates and "wait until DATE" sequencing. Rules coordinate: money leaving an unsuitable equity fund goes to the under-weight asset when equity is already over its band. No fund suggestions without a risk profile. Every run is persisted and reproducible. |
-| **Copilot** | Claude Fable 5.1 with 12 deterministic tools; Haiku 5.5 guardrail classifier; compliance post-processor; number tracing; human-expert escalation; full audit trail. |
-| **Proactive nudges** | Lots turning long-term soon, exit-load windows ending, ELSS unlocks, missed SIPs, laggards, idle cash, drift, LTCG harvesting window (Jan–Mar), risk profile due. |
-| **Goals** | Goal-based SIP maths with cautious/base/optimistic assumptions (labelled as assumptions, never predictions). |
-| **Web app** | Next.js 16 PWA-ready UI: onboarding, portfolio, Ask RA (streaming), suggestions, tax, CAS import, risk profile. Light and dark themes; lakh/crore formatting; compliance footer everywhere. |
+| **Chat** | White, text-only window. Streams answers; a guest is created per browser, and the latest conversation reloads on refresh. |
+| **Answers** | One-line verdict, then 3–5 short bullets, under ~120 words, simple words, the "as of" date, and the past-performance caveat. Facts and comparisons, never buy/sell calls. |
+| **Fund lens** | For any fund (name or AMFI code): its rank among category peers; each metric beside the category median and quartiles; the D-profile; launch date and minimum investment; the category's top funds. A Direct plan is compared through its Regular-Growth sibling so peers are like for like. |
+| **Comparisons** | 2–4 funds side by side, flagging when they're in different categories (ranks then aren't comparable). |
+| **Ranking** | `rank-v0.2`, within each SEBI category: 3-year rolling-return consistency vs peers, 3-year Sortino, downside capture, max drawdown and expense ratio → composite score and tier. |
+| **Guardrails** | Rules (plus a Claude Haiku classifier on the Claude path) route each message: in scope / out of scope (stocks, F&O, crypto, insurance, loans, FDs) / human expert / prompt injection. |
+| **Compliance** | Rewrites banned claims ("guaranteed", "risk-free", adviser language) unless negated; attaches disclosures; logs any number that no tool output supports (`untraced_numbers`). |
 
-### RA Score dimensions
+### The copilot's tools
 
-Six explainable dimensions, each with a one-line reason and what would raise it:
+The LLM explains; deterministic tools supply every number.
 
-| RA dimension (weight) | Measures | Notes |
-|---|---|---|
-| Discipline (15) | Months invested, SIP continuity, missed instalments | Continuity of investing |
-| Balance (20) | Equity/debt/gold vs the **investor's own** risk-profile bands | Personalised to the investor's risk profile |
-| Risk fit (20) | Share of money in funds suitable for the profile | Suitability |
-| Diversification (15) | Fund/AMC/sector concentration, clutter, overlap | Concentration |
-| Performance (20) | **Your actual cashflows replayed into the benchmark index fund** (alpha in XIRR), plus peer tiers | On real money in and out, not point-to-point returns |
-| Efficiency (10) | Idle cash, short-term churn, IDCW tax drag | New |
+| Tool | Returns |
+|---|---|
+| `fund_lens` | One fund vs its category: rank, metrics vs median/quartiles, D-profile, facts, top peers |
+| `compare_funds` | 2–4 funds' ranks and key metrics with category medians |
+| `find_funds` | Fuzzy name search → AMFI code, plan, option, category |
+| `search_documents` | Full-text passages from stored official documents (none loaded yet, see below) |
+| `request_expert` | Opens an expert ticket (free, reply within 1 business day) |
+
+---
+
+## What's in the database
+
+Supabase Postgres, project `pvdbzvkmpbzixfhdrhnx` (ap-southeast-1). All RA tables live in the **`mf` schema**, which Supabase doesn't expose through its REST API. To see them in the Table Editor, pick **`mf`** in the schema dropdown. Counts are as of **16 Oct 2026**.
+
+### Used by the chat
+
+| Table | Rows | Size | What it holds | Source |
+|---|---:|---:|---|---|
+| `scheme` | 14,377 | 10 MB | Every AMFI scheme code (one per plan + option): name, AMC, raw and normalised SEBI category, plan, option, ISINs, latest NAV, riskometer (category default), `in_universe`, `is_benchmark_proxy` | AMFI NAVAll, daily |
+| `nav_history` | 1,747,251 | 125 MB | Daily NAVs, **18 Oct 2019 → 15 Oct 2026**, for the investable universe and the benchmark proxies | AMFI NAV history report |
+| `scheme_metric` | 1,426 | 1.4 MB | Per-fund metrics and peer ranking (1/3/5-year returns, rolling consistency, Sortino, volatility, max drawdown, downside capture, beta, R², tracking error, TER → composite score and tier). Latest run: 15 Oct 2026, 1,137 funds, `rank-v0.2` | Computed from `nav_history` + `scheme_ter` |
+| `category_stat` | 43 | 0.2 MB | Per-category peer distributions (medians, quartiles), so any fund can be placed against its category quickly | Computed |
+| `scheme_detail` | 16,452 | 14 MB | AMC, scheme type and category, launch and closure dates, minimum investment, ISINs, plus the raw source row | AMFI scheme data CSV |
+| `scheme_ter` | 19,306 *(loading)* | 8 MB | Total expense ratio, Regular and Direct, with the breakdown (base, brokerage, transaction, statutory, 52(6A)(b)/(c)). Stored as change points: a row only when a value changes. Target window: Oct 2023 → today | AMFI TER disclosures |
+| `chat_session` / `chat_message` | 6 / 10 | <0.1 MB | Conversations: frozen system prompt, prompt version, model, the API transcript, display text, tool calls, guardrail verdicts, compliance flags, untraced numbers | The app |
+| `investor` | 8 | <0.1 MB | Chat owners: 7 browser guests and 1 legacy demo investor | The app |
+| `escalation` | 0 | — | Human-expert tickets opened from chat | The app |
+| `audit_log` | 0 | — | Audit trail (reserved) | The app |
+
+**Investable universe:** 1,639 schemes. That is 1,634 open-ended Regular-plan Growth schemes from 53 AMCs that published a NAV in the last 30 days (ETFs excluded), plus 5 index funds used as benchmark proxies (Nifty 50, Nifty 500, Midcap 150, Smallcap 250, LargeMidcap 250). Largest groups: index equity 260, thematic 235, index debt 103, multi-asset 59, international FoF 52, flexi cap 46, liquid 43, ELSS 38, small cap 36, large & mid cap 36, large cap 35, mid cap 34.
+
+### Created but empty (waiting on a source)
+
+| Table | Why it's empty |
+|---|---|
+| `document`, `document_chunk` | Official documents (AMFI Code of Ethics, master circular, distributor FAQs, SEBI FAQs, AMFI monthly reports) are held back until legal confirms AMFI's terms of use allow storing them. The loader is ready (`sync-documents`); each document records its `source_terms`. |
+| `scheme_performance` | AMFI's fund-performance feed (official benchmark returns, AUM, official riskometer) blocks automated access (HTTP 403), so it isn't scraped. Proposed alternative: AMC monthly disclosures. |
+| `scheme_portfolio` | Stock-level holdings. Load AMC monthly portfolio disclosures with `load-disclosures FILE.csv`. |
+| `scheme_link` | Name → AMFI-code links for those external feeds. |
+
+### Legacy tables (no longer used by the code)
+
+The earlier portfolio app left these tables in `mf` holding only demo data: `folio` (5), `holding` (8), `txn` (275), `risk_profile` (1), `goal` (1), `reco_run` (2), `reco_item` (8), `import_job` (1), `consent` (0). They are about 0.5 MB in total and safe to drop:
+
+```sql
+DROP TABLE mf.reco_item, mf.reco_run, mf.txn, mf.holding, mf.folio, mf.goal, mf.risk_profile, mf.import_job, mf.consent;
+```
+
+The `public` schema still holds the old securities tables: `historical_prices` (189,103 rows, 51 MB), `concalls` (37), `annual_reports` (0) and `analyst_ratings` (0). They were backed up locally before the planned drop:
+
+```sql
+DROP TABLE public.historical_prices, public.concalls, public.annual_reports, public.analyst_ratings;
+```
+
+**Size:** the whole database is 225 MB, of which `mf` is 160 MB. The Supabase free tier allows 500 MB.
 
 ---
 
@@ -37,45 +82,19 @@ Six explainable dimensions, each with a one-line reason and what would raise it:
 
 ```mermaid
 flowchart LR
-    subgraph Web["Next.js app"]
-        UI["Portfolio · Ask RA · Suggestions · Tax · Import · Risk profile"]
-    end
-    subgraph API["FastAPI (backend/app)"]
-        R["REST + SSE chat"]
-        ORCH["Copilot orchestrator<br/>Fable 5.1 + tools"]
-        GR["Guardrail<br/>Haiku 5.5 + rules"]
-        CP["Compliance post-processor<br/>+ number tracing"]
-        AN["Analysis: portfolio, lots, XIRR,<br/>RA Score, overlap, nudges, tax"]
-        RE["Recommendation engine<br/>reco-v0.1"]
-        RK["Peer ranking<br/>rank-v0.1"]
-    end
-    DB[("Supabase Postgres<br/>schema mf")]
-    AMFI["AMFI NAVAll + history report"]
-    CL["Anthropic API"]
-    UI --> R
-    R --> ORCH --> GR
-    ORCH --> AN
-    ORCH --> RE
-    ORCH --> CP
-    ORCH <--> CL
-    GR <--> CL
-    AN --> RK
-    RE --> RK
-    AN --> DB
-    RE --> DB
-    AMFI -->|daily job| DB
+    UI["Next.js /chat<br/>(white chat window)"] -->|REST + SSE| API["FastAPI"]
+    API --> ORCH["Copilot orchestrator<br/>OpenAI gpt-5.5 or Claude Fable 5.1"]
+    ORCH --> GR["Guardrail<br/>rules (+ Haiku on Claude)"]
+    ORCH --> TOOLS["Tools: fund_lens · compare_funds ·<br/>find_funds · search_documents · request_expert"]
+    ORCH --> CP["Compliance post-processor<br/>+ number tracing"]
+    TOOLS --> RK["Peer ranking rank-v0.2"]
+    TOOLS --> DB[("Supabase Postgres<br/>schema mf")]
+    RK --> DB
+    AMFI["AMFI: NAVAll, NAV history,<br/>scheme data, TER"] -->|daily job| DB
 ```
 
-**The LLM explains, the engines decide** (PRD §10.1): every number comes from a tool, scheme suggestions come only from the engine, and the model never sees name, PAN or phone.
-
-### Copilot (Claude Fable 5.1) — implementation notes
-
-- `claude-fable-5-1` for reasoning and tool use; `claude-haiku-5-5` for the guardrail/intent classifier (structured JSON output). Both are configurable (`COPILOT_MODEL`, `GUARDRAIL_MODEL`); effort defaults to `medium` for chat latency.
-- **Refusal fallbacks are on** (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`): if Fable's safety classifier declines a request, the API reroutes it to a fallback model in the same call. Disable with `COPILOT_REFUSAL_FALLBACKS=false`.
-- **Append-only transcripts** (Fable 5.1 "preserved thinking"): each session freezes its system prompt; every assistant turn is stored exactly as returned (thinking blocks + signatures) and replayed verbatim; tools are a fixed, ordered list. Compliance edits only touch the separately stored display text. `prefix_mismatch_behavior: "drop_block"` (beta `thinking-binding-controls-2026-08-01`) degrades gracefully after deploys that change tools.
-- Prompt caching on the static system prompt + tools; eager tool-input streaming with pydantic validation; tools are bound server-side to the signed-in investor.
-- Guardrail routes: in scope / out of scope (stocks, F&O, crypto, insurance, loans, holistic planning) / escalate (human request, complaint, distress, large redemption → expert ticket) / prompt injection. Rules are a floor the model can't downgrade.
-- Post-processor: rewrites/flags banned claims ("guaranteed returns", "risk-free", adviser/planner language) unless negated, attaches disclosures, and records any number in the answer that no tool output supports (`untraced_numbers`) for audit and evals.
+- **Providers:** `COPILOT_PROVIDER=openai` (current) uses Chat Completions with streamed tool calls and `reasoning_effort="none"` (gpt-5.x rejects function tools with reasoning on that API). `anthropic` uses Claude Fable 5.1 with adaptive thinking, refusal fallbacks (`server-side-fallback-2026-07-01`), an append-only transcript and `drop_block` thinking binding (`thinking-binding-controls-2026-08-01`). Each session keeps the model it started with.
+- The system prompt is versioned (`ra-prompt-v2`) and frozen per session; every turn stores model, prompt version, tool calls and guardrail results.
 
 ---
 
@@ -87,90 +106,74 @@ Requirements: Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 20+.
 # Backend
 cd backend
 uv sync
-cp .env.example .env                 # add ANTHROPIC_API_KEY; DATABASE_URL for Supabase (optional)
-uv run python -m app.cli sync-schemes        # AMFI scheme master + today's NAVs (~10 s)
-uv run python -m app.cli sync-history        # 6 years of NAVs from AMFI (~10 min, first time only)
-uv run python -m app.cli compute-metrics     # peer rankings for every category (~10 s)
-uv run uvicorn app.main:app --reload --port 8000
+cp .env.example .env                          # OPENAI_API_KEY (or ANTHROPIC_API_KEY); DATABASE_URL for Supabase
+uv run python -m app.cli sync-schemes         # AMFI scheme master + today's NAVs
+uv run python -m app.cli sync-history         # 6 years of NAVs (first time only, ~10 min)
+uv run python -m app.cli sync-scheme-details  # launch dates, minimums
+uv run python -m app.cli sync-ter             # expense ratios, last 36 months
+uv run python -m app.cli compute-metrics      # peer rankings
+uv run uvicorn app.main:app --port 8000
 
 # Frontend (new terminal)
 cd frontend
 npm install
 cp .env.example .env.local
-npm run dev                                   # http://localhost:3000
+npm run dev                                   # http://localhost:3000/chat
 ```
 
-Open http://localhost:3000 and choose **Explore with a demo portfolio** (built from real NAVs), or import your own CAS. Without `ANTHROPIC_API_KEY` everything works except the chat, which says it isn't connected.
+Without an API key the chat says it isn't connected.
 
 ### Supabase
 
-1. In the Supabase dashboard: **Connect → Session pooler** and copy the URI (IPv4-friendly, port 5432).
-2. Put it in `backend/.env` as `DATABASE_URL=...`. Tables are created on first start inside the `mf` schema (`DB_SCHEMA`), which Supabase doesn't expose through its REST API. `backend/sql/schema.sql` shows the DDL.
-3. Run the three data commands above once against Supabase (~150–200 MB for 6 years of history; fits the free tier).
-4. For daily refreshes, add `DATABASE_URL` as a GitHub repository secret: `.github/workflows/daily-data.yml` runs `python -m app.cli daily` at 23:45 IST on weekdays (run it manually with **backfill** ticked for the first load).
+1. Dashboard → **Connect → Session pooler**: copy the URI (IPv4, port 5432). The direct `db.<ref>.supabase.co` host is IPv6-only.
+2. Set it as `DATABASE_URL` in `backend/.env`. Tables are created on startup in `DB_SCHEMA` (`mf`). `backend/sql/schema.sql` shows the DDL.
+3. Daily refresh: add `DATABASE_URL` as a GitHub repository secret. `.github/workflows/daily-data.yml` then runs `python -m app.cli daily` at 23:45 IST on weekdays.
 
-> PRD §12 requires investor PII to be stored in India. For real users, use a Supabase project in `ap-south-1` (Mumbai); moving is just a new `DATABASE_URL`.
-
-### CLI
+### CLI (`uv run python -m app.cli …`)
 
 | Command | Purpose |
 |---|---|
-| `sync-schemes` | AMFI scheme master + today's NAVs; refreshes the investable universe |
-| `sync-history [--years N]` | Bulk NAV history from AMFI's report, month by month |
-| `repair-history` | Re-fetch months that came back empty or partial; drop stray rows |
-| `compute-metrics` | Rank every peer-group category (tiers, composite scores) |
-| `daily` | `sync-schemes` + `repair-history` + `compute-metrics` |
-| `create-demo` | Demo investor with real-NAV transactions, risk profile and a goal |
-| `load-disclosures FILE.csv` | AMC monthly portfolio disclosures → stock-level overlap and sector exposure |
+| `sync-schemes` | AMFI scheme master + today's NAVs; rebuilds the investable universe |
+| `sync-history [--years N]` / `repair-history` / `backfill-missing` | NAV history: bulk load, re-fetch gaps, fill schemes with little history |
+| `sync-scheme-details` | Launch dates, minimum investment, ISINs |
+| `sync-ter [--months N]` | Expense ratios (change points) |
+| `compute-metrics` | Rank every peer-group category |
+| `daily` | All daily feeds, gap repair, universe refinement, rankings |
+| `sync-documents` / `search-docs "QUERY"` | Official documents (held for legal) / full-text search |
+| `load-disclosures FILE.csv` | AMC portfolio disclosures → stock-level holdings |
 | `stats` / `print-ddl` | Data counts / Postgres DDL |
+
+### API
+
+`POST /api/investors` (guest) · `GET /api/investors/{id}` · `GET|POST /api/investors/{id}/chat/sessions` · `GET|POST /api/chat/sessions/{id}/messages` (POST streams SSE: `status`, `text`, `done`, `error`) · `GET /api/meta/data-status` · `/api/admin/*` (sync jobs, `ADMIN_TOKEN`).
 
 ---
 
 ## Tests and evals
 
 ```bash
-cd backend && uv run pytest -q        # 32 offline tests: tax rules, FIFO, XIRR, SIPs, CAS import, score, engine, API, copilot loop
-cd frontend && npx tsc --noEmit && npx eslint .
+cd backend && uv run pytest -q                       # offline, on a synthetic market
+cd frontend && npm run typecheck && npx eslint .
+cd backend && uv run python ../evals/run_evals.py    # real LLM calls: costs money
 ```
 
-`evals/` holds the golden set (40 prompts across factual, recommendation, refusal, adversarial and escalation buckets; PRD target 150) and a runner with deterministic graders: guardrail route, required/forbidden tools, forbidden text, compliance flags, untraced numbers, escalation tickets. Release gate: ≥90% overall and 100% on refusals and escalations.
-
-```bash
-cd backend && uv run python ../evals/run_evals.py          # real API calls: costs money
-```
+`evals/golden_set.jsonl` has 32 prompts across factual, comparison, documents, refusal, adversarial and escalation buckets. Deterministic graders check the guardrail route, required and forbidden tools, forbidden text, compliance flags, untraced numbers and escalation tickets. Release gate: ≥90% overall, 100% on refusals and escalations.
 
 ---
 
-## Compliance guardrails built in
-
-- Product and AI copy avoid "adviser/advisory/planner/financial planning/guaranteed/free portfolio review"; the persona is an AI *guide* under the distributor's ARN.
-- Risk profiling is mandatory before fund suggestions; every card passes the suitability gate (REC-6) and carries EUIN, data date, expiry and disclosures.
-- MF market-risk disclaimer, AI disclosure, commission disclosure and the ARN tagline appear on every screen.
-- PAN is Fernet-encrypted with an HMAC lookup hash and shown masked; CAS PDFs and passwords are never stored; the LLM receives pseudonymous portfolio data only.
-- Audit: chat turns store model, prompt version, tool calls, guardrail verdicts, compliance flags and untraced numbers; recommendation runs store inputs and versions.
-
----
-
-## Known gaps → roadmap
+## Next
 
 | Next | Why |
 |---|---|
-| OTP sign-in (Supabase Auth phone OTP) + RBAC; admin/compliance console | Today the investor is chosen in the browser (local/demo use only) |
-| Mock → live BSE StAR MF execution: lumpsum, SIP, switch, redeem, EUIN tagging, execution-only acknowledgement, OTP confirm | Act on a card in one tap (PRD §9.5) |
-| TER, AUM, fund-manager tenure and SID exit loads/riskometers from a data vendor | Fills the three unavailable ranking factors and replaces category-default riskometers/exit loads |
-| AMC monthly portfolio disclosures for the top 100 schemes | Real stock overlap and sector concentration in Diversification |
-| Expert desk: EUIN-holder review queue for escalations and flagged chats | "Your expert always has the last word" |
-| Email-forward CAS import, NSDL/CDSL CAS, monthly re-import nudges | Lower import friction |
-| Push/email/WhatsApp nudges (DLT), Hindi, voice | Proactive reach |
+| AUM, official riskometer and stock holdings from the top AMCs' monthly disclosures | Fills the blocked performance feed; real stock-level diversification |
+| Load official documents once legal clears AMFI's terms | `search_documents` answers on rules with citations |
+| Sign-in (Supabase Auth phone OTP) | Guests today; chats tied to a browser |
 | Eval set to 150 prompts; weekly human review sample | PRD release gate |
-
-What already stands out: cashflow-replay alpha instead of point-to-point returns; coordinated, tax-sequenced cards ("wait until 21 May 2027 to avoid short-term tax"); LTCG exemption tracking and harvesting; a score that says when it can't see enough data; number tracing on every AI answer.
 
 ---
 
-## Context
+The chat runs at `http://localhost:3000/chat` (`/` redirects there). The earlier portfolio, RA Score and suggestions app is preserved at git tag `full-mvp-v1`.
 
-- PRD: `MF-Platform-PRD/PRD + ERD - MF Distribution and AI Copilot Platform.md` (team workspace).
-- Repository layout: `backend/` (FastAPI, SQLAlchemy, analytics, engine, copilot, CLI, tests) · `frontend/` (Next.js app) · `evals/` (golden set + runner) · `.github/workflows/` (CI, daily data).
+Repository: `backend/` (FastAPI, data loaders, analytics, copilot, CLI, tests) · `frontend/` (Next.js chat) · `evals/` (golden set + runner) · `.github/workflows/` (CI, daily data).
 
 Mutual Fund investments are subject to market risks, read all scheme related documents carefully.

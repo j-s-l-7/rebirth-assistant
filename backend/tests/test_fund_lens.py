@@ -45,6 +45,6 @@ def test_copilot_tool_accepts_a_fund_name(db, market):
     db.add(inv)
     db.commit()
     out, ok = ToolContext(db, inv).run("fund_lens", {"fund": "Test Large Cap Fund 3"})
-    assert ok and out["fund"]["amfi_code"] == market["large_cap"][2] and out["held_by_investor"] is False
+    assert ok and out["fund"]["amfi_code"] == market["large_cap"][2]
     out, ok = ToolContext(db, inv).run("fund_lens", {"fund": "No Such Fund Anywhere"})
     assert not ok and "No mutual fund matches" in out["error"]

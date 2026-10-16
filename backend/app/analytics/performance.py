@@ -1,4 +1,4 @@
-"""Scheme metrics, within-category ranking (PRD §11.2) and the shadow-benchmark test.
+"""Scheme metrics and within-category ranking (PRD §11.2).
 
 Factors: consistency (rolling 3-year returns vs peers), risk-adjusted return (3-year
 Sortino), downside protection (downside capture vs the benchmark proxy, max drawdown) and
@@ -8,18 +8,16 @@ redistributed and every result lists what was unavailable (`factors_unavailable`
 """
 
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from statistics import mean, median, pstdev
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.analytics.dates import add_months
 from app.analytics.navbook import NavBook
-from app.analytics.portfolio import HoldingView, external_cashflows
-from app.analytics.xirr import cagr, xirr
 from app.models import CategoryStat, Scheme, SchemeLink, SchemeMetric, SchemeTer
 from app.reference.categories import BENCHMARK_PROXIES, get_category
-from app.reference.tax import add_months
 
 MODEL_VERSION = "rank-v0.2"
 RF_ANNUAL = 0.065
@@ -53,6 +51,12 @@ def regular_ter(db: Session, codes: set[int]) -> dict[int, float]:
         .where(SchemeLink.source == "ter", SchemeLink.amfi_code.in_(codes))
     ).all()
     return {code: float(ter) for code, ter in rows if ter is not None}
+
+
+def cagr(start_value: float, end_value: float, years: float) -> float | None:
+    if start_value <= 0 or end_value <= 0 or years <= 0:
+        return None
+    return (end_value / start_value) ** (1 / years) - 1
 
 
 def trailing_cagr(nb: NavBook, code: int, as_of: date, years: int) -> float | None:
@@ -338,42 +342,3 @@ def ensure_metrics(db: Session, nb: NavBook, codes_by_category: dict[str, set[in
         db.commit()
     return out
 
-
-def shadow_benchmark(nb: NavBook, hv: HoldingView, as_of: date) -> dict | None:
-    """Replay the investor's own cashflows into the category benchmark proxy."""
-    bench = benchmark_code(hv.scheme.category_key)
-    flows = external_cashflows(hv.txns)
-    if not bench or not flows or hv.xirr is None:
-        return None
-    first_bench = nb.first_date(bench)
-    if first_bench is None or first_bench > min(d for d, _ in flows):
-        return None
-    units = 0.0
-    for d, amt in flows:
-        nav = nb.nav_on(bench, d)
-        if not nav:
-            return None
-        units = max(0.0, units - amt / nav)  # money in (negative) buys units; money out sells
-    end_nav = nb.nav_on(bench, as_of)
-    if not end_nav:
-        return None
-    bench_value = units * end_nav
-    bench_xirr = xirr(flows + [(as_of, bench_value)])
-    if bench_xirr is None:
-        return None
-    years = (as_of - min(d for d, _ in flows)).days / 365.25
-    return {
-        "benchmark": benchmark_label(hv.scheme.category_key),
-        "benchmark_amfi_code": bench,
-        "same_cashflows_value": round(bench_value, 2),
-        "benchmark_xirr_pct": round(bench_xirr * 100, 2),
-        "fund_xirr_pct": round(hv.xirr * 100, 2),
-        "alpha_pp": round((hv.xirr - bench_xirr) * 100, 2),
-        "value_difference": round(hv.value - bench_value, 2),
-        "years": round(years, 2),
-    }
-
-
-def metrics_freshness(db: Session) -> datetime | None:
-    row = db.scalar(select(SchemeMetric.as_of).order_by(SchemeMetric.as_of.desc()).limit(1))
-    return datetime.combine(row, datetime.min.time(), tzinfo=timezone.utc) if row else None

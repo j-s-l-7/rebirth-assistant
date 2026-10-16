@@ -23,10 +23,6 @@ RISK_LABELS = {
 }
 
 
-def risk_rank(level: str) -> int:
-    return RISK_LEVELS.index(level) + 1
-
-
 @dataclass(frozen=True)
 class Category:
     key: str

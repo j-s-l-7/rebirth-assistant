@@ -27,6 +27,29 @@ CREATE TABLE category_stat (
 
 CREATE INDEX ix_category_stat_category_key ON category_stat (category_key);
 
+CREATE TABLE document (
+	id VARCHAR(32) NOT NULL, 
+	source VARCHAR(20) NOT NULL, 
+	doc_type VARCHAR(30) NOT NULL, 
+	title VARCHAR(300) NOT NULL, 
+	url TEXT NOT NULL, 
+	published_on DATE, 
+	fetched_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	sha256 VARCHAR(64) NOT NULL, 
+	mime VARCHAR(80), 
+	bytes INTEGER NOT NULL, 
+	storage_path TEXT NOT NULL, 
+	pages INTEGER, 
+	amc_name VARCHAR(120), 
+	amfi_code INTEGER, 
+	text_chars INTEGER NOT NULL, 
+	meta JSON, 
+	PRIMARY KEY (id), 
+	UNIQUE (url)
+);
+
+CREATE INDEX ix_document_doc_type ON document (doc_type);
+
 CREATE TABLE investor (
 	id VARCHAR(32) NOT NULL, 
 	display_name VARCHAR(120) NOT NULL, 
@@ -61,12 +84,90 @@ CREATE TABLE scheme (
 	PRIMARY KEY (amfi_code)
 );
 
-CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
 CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
 CREATE INDEX ix_scheme_category_key ON scheme (category_key);
-CREATE INDEX ix_scheme_isin_reinvest ON scheme (isin_reinvest);
+CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
 CREATE INDEX ix_scheme_isin_growth ON scheme (isin_growth);
+CREATE INDEX ix_scheme_isin_reinvest ON scheme (isin_reinvest);
 CREATE INDEX ix_scheme_name ON scheme (name);
+
+CREATE TABLE scheme_detail (
+	amfi_code INTEGER NOT NULL, 
+	amc_full_name VARCHAR(160), 
+	scheme_base_name VARCHAR(255), 
+	scheme_type VARCHAR(40), 
+	scheme_category VARCHAR(160), 
+	nav_name VARCHAR(255), 
+	min_amount NUMERIC(18, 2), 
+	launch_date DATE, 
+	closure_date DATE, 
+	isins JSON, 
+	raw JSON NOT NULL, 
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (amfi_code)
+);
+
+CREATE INDEX ix_scheme_detail_scheme_base_name ON scheme_detail (scheme_base_name);
+
+CREATE TABLE scheme_link (
+	amfi_code INTEGER NOT NULL, 
+	source VARCHAR(20) NOT NULL, 
+	external_key VARCHAR(120) NOT NULL, 
+	method VARCHAR(20) NOT NULL, 
+	score FLOAT NOT NULL, 
+	PRIMARY KEY (amfi_code, source)
+);
+
+CREATE INDEX ix_scheme_link_external_key ON scheme_link (external_key);
+
+CREATE TABLE scheme_performance (
+	id VARCHAR(32) NOT NULL, 
+	external_key VARCHAR(120) NOT NULL, 
+	plan VARCHAR(12) NOT NULL, 
+	amfi_code INTEGER, 
+	scheme_name VARCHAR(255) NOT NULL, 
+	as_of DATE NOT NULL, 
+	benchmark VARCHAR(255), 
+	riskometer VARCHAR(30), 
+	benchmark_riskometer VARCHAR(30), 
+	aum_cr FLOAT, 
+	returns JSON, 
+	benchmark_returns JSON, 
+	raw JSON NOT NULL, 
+	PRIMARY KEY (id), 
+	UNIQUE (external_key, plan, as_of)
+);
+
+CREATE INDEX ix_scheme_performance_external_key ON scheme_performance (external_key);
+CREATE INDEX ix_scheme_performance_amfi_code ON scheme_performance (amfi_code);
+
+CREATE TABLE scheme_ter (
+	id VARCHAR(32) NOT NULL, 
+	nsdl_code VARCHAR(40) NOT NULL, 
+	mf_id INTEGER, 
+	scheme_name VARCHAR(255) NOT NULL, 
+	scheme_category VARCHAR(160), 
+	scheme_type VARCHAR(40), 
+	effective_from DATE NOT NULL, 
+	r_ber FLOAT, 
+	r_brokerage FLOAT, 
+	r_transaction FLOAT, 
+	r_statutory FLOAT, 
+	r_ter FLOAT, 
+	d_ber FLOAT, 
+	d_brokerage FLOAT, 
+	d_transaction FLOAT, 
+	d_statutory FLOAT, 
+	d_ter FLOAT, 
+	r_6a_b FLOAT, 
+	r_6a_c FLOAT, 
+	d_6a_b FLOAT, 
+	d_6a_c FLOAT, 
+	PRIMARY KEY (id), 
+	UNIQUE (nsdl_code, effective_from)
+);
+
+CREATE INDEX ix_scheme_ter_nsdl_code ON scheme_ter (nsdl_code);
 
 CREATE TABLE chat_session (
 	id VARCHAR(32) NOT NULL, 
@@ -82,63 +183,20 @@ CREATE TABLE chat_session (
 
 CREATE INDEX ix_chat_session_investor_id ON chat_session (investor_id);
 
-CREATE TABLE consent (
+CREATE TABLE document_chunk (
 	id VARCHAR(32) NOT NULL, 
-	investor_id VARCHAR(32) NOT NULL, 
-	purpose VARCHAR(40) NOT NULL, 
-	notice_version VARCHAR(20) NOT NULL, 
-	granted_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	withdrawn_at TIMESTAMP WITH TIME ZONE, 
+	document_id VARCHAR(32) NOT NULL, 
+	seq INTEGER NOT NULL, 
+	page_from INTEGER, 
+	page_to INTEGER, 
+	heading VARCHAR(300), 
+	text TEXT NOT NULL, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(investor_id) REFERENCES investor (id) ON DELETE CASCADE
+	UNIQUE (document_id, seq), 
+	FOREIGN KEY(document_id) REFERENCES document (id) ON DELETE CASCADE
 );
 
-CREATE INDEX ix_consent_investor_id ON consent (investor_id);
-
-CREATE TABLE folio (
-	id VARCHAR(32) NOT NULL, 
-	investor_id VARCHAR(32) NOT NULL, 
-	amc_name VARCHAR(120) NOT NULL, 
-	folio_no VARCHAR(40) NOT NULL, 
-	source VARCHAR(20) NOT NULL, 
-	PRIMARY KEY (id), 
-	UNIQUE (investor_id, amc_name, folio_no), 
-	FOREIGN KEY(investor_id) REFERENCES investor (id) ON DELETE CASCADE
-);
-
-CREATE INDEX ix_folio_investor_id ON folio (investor_id);
-
-CREATE TABLE goal (
-	id VARCHAR(32) NOT NULL, 
-	investor_id VARCHAR(32) NOT NULL, 
-	name VARCHAR(80) NOT NULL, 
-	target_amount NUMERIC(18, 2) NOT NULL, 
-	target_date DATE NOT NULL, 
-	current_allocated NUMERIC(18, 2) NOT NULL, 
-	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(investor_id) REFERENCES investor (id) ON DELETE CASCADE
-);
-
-CREATE INDEX ix_goal_investor_id ON goal (investor_id);
-
-CREATE TABLE import_job (
-	id VARCHAR(32) NOT NULL, 
-	investor_id VARCHAR(32) NOT NULL, 
-	source VARCHAR(20) NOT NULL, 
-	status VARCHAR(20) NOT NULL, 
-	parser_version VARCHAR(40), 
-	statement_from DATE, 
-	statement_to DATE, 
-	summary JSON, 
-	exceptions JSON, 
-	error TEXT, 
-	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(investor_id) REFERENCES investor (id) ON DELETE CASCADE
-);
-
-CREATE INDEX ix_import_job_investor_id ON import_job (investor_id);
+CREATE INDEX ix_document_chunk_document_id ON document_chunk (document_id);
 
 CREATE TABLE nav_history (
 	amfi_code INTEGER NOT NULL, 
@@ -147,22 +205,6 @@ CREATE TABLE nav_history (
 	PRIMARY KEY (amfi_code, nav_date), 
 	FOREIGN KEY(amfi_code) REFERENCES scheme (amfi_code)
 );
-
-CREATE TABLE risk_profile (
-	id VARCHAR(32) NOT NULL, 
-	investor_id VARCHAR(32) NOT NULL, 
-	questionnaire_version VARCHAR(20) NOT NULL, 
-	answers JSON NOT NULL, 
-	score INTEGER NOT NULL, 
-	bucket VARCHAR(32) NOT NULL, 
-	horizon_years INTEGER NOT NULL, 
-	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	valid_till DATE NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(investor_id) REFERENCES investor (id) ON DELETE CASCADE
-);
-
-CREATE INDEX ix_risk_profile_investor_id ON risk_profile (investor_id);
 
 CREATE TABLE scheme_metric (
 	id VARCHAR(32) NOT NULL, 
@@ -193,6 +235,28 @@ CREATE TABLE scheme_portfolio (
 
 CREATE INDEX ix_scheme_portfolio_amfi_code ON scheme_portfolio (amfi_code);
 
+CREATE TABLE chat_message (
+	id VARCHAR(32) NOT NULL, 
+	session_id VARCHAR(32) NOT NULL, 
+	seq INTEGER NOT NULL, 
+	role VARCHAR(12) NOT NULL, 
+	api_content JSON NOT NULL, 
+	display_text TEXT, 
+	visible BOOLEAN NOT NULL, 
+	tool_calls JSON, 
+	guardrail JSON, 
+	disclosures JSON, 
+	model VARCHAR(40), 
+	prompt_version VARCHAR(20), 
+	usage JSON, 
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (id), 
+	UNIQUE (session_id, seq), 
+	FOREIGN KEY(session_id) REFERENCES chat_session (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_chat_message_session_id ON chat_message (session_id);
+
 CREATE TABLE escalation (
 	id VARCHAR(32) NOT NULL, 
 	investor_id VARCHAR(32) NOT NULL, 
@@ -207,102 +271,4 @@ CREATE TABLE escalation (
 );
 
 CREATE INDEX ix_escalation_investor_id ON escalation (investor_id);
-
-CREATE TABLE holding (
-	id VARCHAR(32) NOT NULL, 
-	folio_id VARCHAR(32) NOT NULL, 
-	amfi_code INTEGER NOT NULL, 
-	units NUMERIC(18, 4) NOT NULL, 
-	cost_value NUMERIC(18, 2), 
-	statement_value NUMERIC(18, 2), 
-	as_of DATE NOT NULL, 
-	PRIMARY KEY (id), 
-	UNIQUE (folio_id, amfi_code), 
-	FOREIGN KEY(folio_id) REFERENCES folio (id) ON DELETE CASCADE, 
-	FOREIGN KEY(amfi_code) REFERENCES scheme (amfi_code)
-);
-
-CREATE INDEX ix_holding_folio_id ON holding (folio_id);
-CREATE INDEX ix_holding_amfi_code ON holding (amfi_code);
-
-CREATE TABLE reco_run (
-	id VARCHAR(32) NOT NULL, 
-	investor_id VARCHAR(32) NOT NULL, 
-	risk_profile_id VARCHAR(32), 
-	trigger VARCHAR(20) NOT NULL, 
-	model_version VARCHAR(20) NOT NULL, 
-	inputs JSON NOT NULL, 
-	summary JSON NOT NULL, 
-	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(investor_id) REFERENCES investor (id) ON DELETE CASCADE, 
-	FOREIGN KEY(risk_profile_id) REFERENCES risk_profile (id) ON DELETE SET NULL
-);
-
-CREATE INDEX ix_reco_run_investor_id ON reco_run (investor_id);
-
-CREATE TABLE txn (
-	id VARCHAR(32) NOT NULL, 
-	folio_id VARCHAR(32) NOT NULL, 
-	amfi_code INTEGER NOT NULL, 
-	import_job_id VARCHAR(32), 
-	txn_type VARCHAR(32) NOT NULL, 
-	txn_date DATE NOT NULL, 
-	amount NUMERIC(18, 2), 
-	units NUMERIC(18, 4), 
-	nav NUMERIC(14, 4), 
-	balance NUMERIC(18, 4), 
-	description VARCHAR(255), 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(folio_id) REFERENCES folio (id) ON DELETE CASCADE, 
-	FOREIGN KEY(amfi_code) REFERENCES scheme (amfi_code), 
-	FOREIGN KEY(import_job_id) REFERENCES import_job (id) ON DELETE SET NULL
-);
-
-CREATE INDEX ix_txn_txn_date ON txn (txn_date);
-CREATE INDEX ix_txn_folio_id ON txn (folio_id);
-CREATE INDEX ix_txn_amfi_code ON txn (amfi_code);
-
-CREATE TABLE chat_message (
-	id VARCHAR(32) NOT NULL, 
-	session_id VARCHAR(32) NOT NULL, 
-	seq INTEGER NOT NULL, 
-	role VARCHAR(12) NOT NULL, 
-	api_content JSON NOT NULL, 
-	display_text TEXT, 
-	visible BOOLEAN NOT NULL, 
-	tool_calls JSON, 
-	guardrail JSON, 
-	disclosures JSON, 
-	cards JSON, 
-	model VARCHAR(40), 
-	prompt_version VARCHAR(20), 
-	usage JSON, 
-	reco_run_id VARCHAR(32), 
-	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	PRIMARY KEY (id), 
-	UNIQUE (session_id, seq), 
-	FOREIGN KEY(session_id) REFERENCES chat_session (id) ON DELETE CASCADE, 
-	FOREIGN KEY(reco_run_id) REFERENCES reco_run (id) ON DELETE SET NULL
-);
-
-CREATE INDEX ix_chat_message_session_id ON chat_message (session_id);
-
-CREATE TABLE reco_item (
-	id VARCHAR(32) NOT NULL, 
-	run_id VARCHAR(32) NOT NULL, 
-	action VARCHAR(24) NOT NULL, 
-	amfi_code INTEGER, 
-	from_amfi_code INTEGER, 
-	amount NUMERIC(18, 2), 
-	priority INTEGER NOT NULL, 
-	suitability_pass BOOLEAN NOT NULL, 
-	status VARCHAR(16) NOT NULL, 
-	card JSON NOT NULL, 
-	expires_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(run_id) REFERENCES reco_run (id) ON DELETE CASCADE
-);
-
-CREATE INDEX ix_reco_item_run_id ON reco_item (run_id);
 

@@ -39,18 +39,10 @@ class Settings(BaseSettings):
     openai_max_tokens: int = 2000
     copilot_refusal_fallbacks: bool = True
 
-    # Security: field-level encryption for PAN (Fernet key) and an HMAC pepper for lookups.
-    # Dev defaults are generated per machine if unset; never use them in production.
-    field_encryption_key: str | None = None
-    pan_hash_pepper: str = "dev-only-pepper-change-me"
-
     # Compliance identity shown in UI and disclosures.
     distributor_name: str = "[DistCo] Pvt Ltd"
     arn: str = "ARN-PENDING"
     euin: str = "E000000"
-
-    # Default tax slab used only to *estimate* slab-taxed gains (labelled as an estimate).
-    default_tax_slab_pct: float = 30.0
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     # When set, /admin/* endpoints require the X-Admin-Token header.

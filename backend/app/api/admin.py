@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
+from app.config import get_settings
 from app.db import SessionLocal, get_db, is_postgres
 from app.models import NavPoint, Scheme, SchemeMetric
 
@@ -40,7 +41,9 @@ def data_status(db: Session = Depends(get_db)):
         "nav_points": db.scalar(select(func.count()).select_from(NavPoint)),
         "latest_nav_date": (d.isoformat() if (d := db.scalar(select(func.max(NavPoint.nav_date)))) else None),
         "metrics_as_of": (d.isoformat() if (d := db.scalar(select(func.max(SchemeMetric.as_of)))) else None),
-        "copilot_configured": bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")),
+        "copilot_provider": get_settings().copilot_provider,
+        "copilot_configured": bool(os.environ.get("OPENAI_API_KEY") if get_settings().copilot_provider == "openai"
+                                   else os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")),
     }
 
 

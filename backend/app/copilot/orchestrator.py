@@ -21,7 +21,7 @@ from app.copilot.compliance import post_process, sources_from_tool_calls, untrac
 from app.copilot.guardrails import classify, system_note
 from app.copilot.prompts import PROMPT_VERSION, build_system_prompt
 from app.copilot.tools import TOOL_LABELS, ToolContext, tool_definitions
-from app.models import AuditLog, ChatMessage, ChatSession, Escalation, Investor
+from app.models import ChatMessage, ChatSession, Escalation, Investor
 
 log = logging.getLogger(__name__)
 
@@ -140,9 +140,8 @@ async def open_turn(turn: "Turn", user_text: str, client) -> AsyncIterator[dict]
 
 
 def finish_turn(turn: "Turn", user_text: str, verdict: dict, ticket: str | None, tools_used: set[str], text_parts: list[str], model: str) -> dict:
-    """Compliance post-processing, number tracing and audit for the turn's final answer;
+    """Compliance post-processing and number tracing for the turn's final answer;
     returns the `done` event."""
-    db, settings = turn.db, turn.settings
     raw_text = "\n\n".join(p.strip() for p in text_parts if p and p.strip())
     display, flags, disclosures = post_process(raw_text, tools_used)
     untraced = untraced_numbers(raw_text, sources_from_tool_calls(turn.tool_log, user_text)) if turn.tool_log else []
@@ -151,20 +150,14 @@ def finish_turn(turn: "Turn", user_text: str, verdict: dict, ticket: str | None,
     last.display_text = display
     last.visible = True
     last.disclosures = disclosures
-    last.cards = turn.ctx.cards or None
-    last.reco_run_id = turn.ctx.reco_run_id
     last.guardrail = {"compliance_flags": flags, "untraced_numbers": untraced, "classifier": verdict}
-    if turn.ctx.reco_run_id:
-        db.add(AuditLog(actor_type="ai", actor_id=turn.investor.id, action="recommendation_explained", entity_name="reco_run", entity_id=turn.ctx.reco_run_id,
-                        payload={"session_id": turn.session.id, "message_id": last.id, "model": model, "prompt_version": turn.session.prompt_version,
-                                 "disclosures": disclosures, "euin": settings.euin, "compliance_flags": flags}))
-    db.commit()
-    return {"event": "done", "data": {"message_id": last.id, "text": display, "disclosures": disclosures, "cards": turn.ctx.cards,
+    turn.db.commit()
+    return {"event": "done", "data": {"message_id": last.id, "text": display, "disclosures": disclosures,
                                       "escalation_id": ticket or turn.ctx.escalation_id, "model": model}}
 
 
 async def run_turn(session_factory: sessionmaker, session_id: str, user_text: str) -> AsyncIterator[dict]:
-    """Yields events: status, text, cards, done, error."""
+    """Yields events: status, text, done, error."""
     db = session_factory()
     try:
         session = db.get(ChatSession, session_id)
@@ -224,8 +217,6 @@ async def run_turn(session_factory: sessionmaker, session_id: str, user_text: st
                 tools_used.add(tu.name)
                 calls.append({"id": tu.id, "name": tu.name, "input": tu.input, "ok": ok, "output": output})
                 results.append({"type": "tool_result", "tool_use_id": tu.id, "content": json.dumps(output, default=str), "is_error": not ok})
-                if tu.name == "run_recommendations" and turn.ctx.cards:
-                    yield {"event": "cards", "data": {"cards": turn.ctx.cards}}
             row.tool_calls = [{k: v for k, v in c.items() if k != "output"} | {"output_preview": json.dumps(c["output"], default=str)[:2000]} for c in calls]
             turn.tool_log.extend(calls)
             db.commit()
@@ -240,10 +231,10 @@ async def run_turn(session_factory: sessionmaker, session_id: str, user_text: st
                 for r in turn.turn_rows:
                     if r.role == "system":
                         r.api_content = None
-            msg = "I can't help with that one. I'm happy to help with anything about your mutual funds."
+            msg = "I can't help with that one. I'm happy to help with anything about mutual funds."
             turn.append("assistant", None, display_text=msg, visible=True, model=session.model, prompt_version=session.prompt_version,
                         guardrail={"refusal": True, "category": getattr(getattr(final, "stop_details", None), "category", None)})
-            yield {"event": "done", "data": {"text": msg, "disclosures": [], "cards": []}}
+            yield {"event": "done", "data": {"text": msg, "disclosures": []}}
             return
 
         text_parts = []

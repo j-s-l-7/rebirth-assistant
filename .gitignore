@@ -9,10 +9,10 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# Local data: SQLite database, dev encryption key, CAS uploads (never commit)
+# Local data: SQLite database, document archive, backups (never commit)
 backend/data/
 
-# Eval reports can contain model answers about the demo portfolio
+# Eval reports (model answers; regenerate locally)
 evals/report*.json
 
 # OS / editors

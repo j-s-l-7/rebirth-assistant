@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import admin, chat, investors, portfolio
+from app.api import admin, chat, investors
 from app.config import get_settings
 from app.db import init_db
 
@@ -25,7 +25,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-for r in (investors.router, portfolio.router, chat.router, admin.router):
+for r in (investors.router, chat.router, admin.router):
     app.include_router(r, prefix="/api")
 
 

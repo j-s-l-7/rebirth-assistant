@@ -1,12 +1,12 @@
 """Golden-set eval runner for the RA copilot (PRD AI-9 / §10.6).
 
-Runs every prompt in a fresh chat session for one investor (the demo investor by
-default), then grades deterministically: guardrail route, tools called / not called,
-required and forbidden text, compliance flags, untraced numbers, escalation tickets.
+Runs every prompt in a fresh chat session for one guest investor, then grades
+deterministically: guardrail route, tools called / not called, required and forbidden
+text, compliance flags, untraced numbers, escalation tickets.
 
     cd backend && uv run python ../evals/run_evals.py [--investor ID] [--only refuse-01,esc-02] [--bucket refusal]
 
-Each prompt is a real Claude API call (Fable 5.1 + the Haiku classifier): it costs money.
+Each prompt is a real LLM call on the configured provider (COPILOT_PROVIDER): it costs money.
 Release gate: >=90% overall, 100% on refusal and escalation buckets.
 """
 
@@ -96,11 +96,13 @@ async def main() -> int:
 
     init_db()
     db = SessionLocal()
-    investor_id = args.investor or db.scalar(select(Investor.id).where(Investor.is_demo.is_(True)).order_by(Investor.created_at.desc()))
-    db.close()
+    investor_id = args.investor
     if not investor_id:
-        print("No investor: create the demo first (python -m app.cli create-demo) or pass --investor.")
-        return 2
+        guest = Investor(display_name="Eval guest")
+        db.add(guest)
+        db.commit()
+        investor_id = guest.id
+    db.close()
 
     cases = [json.loads(line) for line in (ROOT / "golden_set.jsonl").read_text().splitlines() if line.strip()]
     if args.only:

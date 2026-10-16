@@ -56,18 +56,9 @@ class NavBook:
         i = bisect_right(dates, d)
         return navs[i - 1] if i else None
 
-    def nav_on_or_after(self, code: int, d: date) -> tuple[date, float] | None:
-        dates, navs = self.series(code)
-        i = bisect_left(dates, d)
-        return (dates[i], navs[i]) if i < len(dates) else None
-
     def latest(self, code: int) -> tuple[date, float] | None:
         dates, navs = self.series(code)
         return (dates[-1], navs[-1]) if dates else None
-
-    def previous(self, code: int) -> tuple[date, float] | None:
-        dates, navs = self.series(code)
-        return (dates[-2], navs[-2]) if len(dates) >= 2 else None
 
     def first_date(self, code: int) -> date | None:
         dates, _ = self.series(code)

@@ -4,8 +4,6 @@ import pytest
 
 from app.data.amfi import iter_rows
 from app.reference.categories import normalise_category, normalise_option, normalise_plan
-from app.reference.risk import score_answers, suitability
-from app.reference.tax import classify_gain
 
 
 @pytest.mark.parametrize(
@@ -52,31 +50,3 @@ PPFAS Mutual Fund
     r = rows[0]
     assert (r.amfi_code, r.amc_name, r.isin_growth, r.nav, r.nav_date) == (122640, "PPFAS Mutual Fund", "INF879O01027", 81.364, date(2026, 10, 14))
     assert normalise_category(r.raw_category, r.name) == "flexi_cap"
-
-
-def test_risk_scoring_takes_the_cautious_side():
-    bold_but_thin = {"age": "under_30", "horizon": "gt10", "income": "uncertain", "emergency": "none", "dependents": "3plus",
-                     "drawdown": "buy_more", "goal": "max_growth", "experience": "gt5"}
-    r = score_answers(bold_but_thin)
-    assert r.willingness_score == 100
-    assert r.bucket in ("conservative", "moderately_conservative")
-    short = dict(bold_but_thin, income="very", emergency="gt6", dependents="none", horizon="lt1")
-    assert score_answers(short).bucket == "conservative"
-
-
-def test_suitability_gate():
-    assert suitability("moderate", "flexi_cap")["pass"]
-    assert not suitability("moderate", "small_cap")["pass"]
-    assert not suitability("aggressive", "small_cap", horizon_years=4)["pass"]
-    assert suitability("aggressive", "small_cap", horizon_years=10)["pass"]
-
-
-def test_tax_classification_boundaries():
-    buy = date(2025, 1, 15)
-    assert classify_gain("equity", buy, date(2026, 1, 15)).term == "STCG"  # exactly 12 months: short-term
-    assert classify_gain("equity", buy, date(2026, 1, 16)).term == "LTCG"
-    assert classify_gain("equity", buy, date(2026, 1, 16)).rate_pct == 12.5
-    assert classify_gain("debt", date(2023, 5, 1), date(2026, 10, 1)).term == "SLAB"  # post Apr-2023 debt: always slab
-    assert classify_gain("debt", date(2022, 5, 1), date(2026, 10, 1)).term == "LTCG"
-    assert classify_gain("other", date(2023, 6, 1), date(2025, 3, 1)).term == "SLAB"  # old s.50AA definition
-    assert classify_gain("other", date(2023, 6, 1), date(2025, 7, 1)).term == "LTCG"  # >24m, after FY25-26 change

@@ -98,8 +98,6 @@ async def run_turn_openai(turn, user_text: str) -> AsyncIterator[dict]:
                 tool_msg = {"role": "tool", "tool_call_id": c["id"], "content": json.dumps(output, default=str)}
                 turn.append("tool", tool_msg, visible=False)
                 messages.append(tool_msg)
-                if c["name"] == "run_recommendations" and turn.ctx.cards:
-                    yield {"event": "cards", "data": {"cards": turn.ctx.cards}}
             row.tool_calls = [{k: v for k, v in a.items() if k != "output"} | {"output_preview": json.dumps(a["output"], default=str)[:2000]} for a in audit]
             turn.db.commit()
 

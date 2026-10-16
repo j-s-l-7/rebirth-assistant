@@ -12,7 +12,6 @@
     python -m app.cli sync-documents          # regulatory texts + AMFI monthly reports (originals + full text)
     python -m app.cli search-docs "QUERY"     # full-text search over stored documents
     python -m app.cli daily                   # all daily feeds, gap repair, universe refinement, rankings
-    python -m app.cli create-demo
     python -m app.cli load-disclosures FILE.csv
     python -m app.cli stats
     python -m app.cli print-ddl > sql/schema.sql   # Postgres DDL for review (tables live in DB_SCHEMA)
@@ -119,7 +118,6 @@ def main() -> None:
     sd.add_argument("query")
     sd.add_argument("--limit", type=int, default=5)
     sub.add_parser("daily")
-    sub.add_parser("create-demo")
     d = sub.add_parser("load-disclosures")
     d.add_argument("path")
     sub.add_parser("stats")
@@ -184,15 +182,10 @@ def main() -> None:
             out = {"results": search_documents(db, args.query, limit=args.limit)}
         elif args.cmd == "daily":
             out = run_daily(db)
-        elif args.cmd == "create-demo":
-            from app.ingest.demo import create_demo_investor
-
-            inv = create_demo_investor(db)
-            out = {"investor_id": inv.id}
         elif args.cmd == "load-disclosures":
             from pathlib import Path
 
-            from app.analytics.overlap import load_disclosure_csv
+            from app.data.disclosures import load_disclosure_csv
 
             out = {"rows": load_disclosure_csv(db, Path(args.path))}
         else:

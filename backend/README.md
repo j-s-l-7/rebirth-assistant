@@ -1,18 +1,15 @@
 # RA backend
 
-FastAPI service: AMFI data pipeline, portfolio analytics, RA Score, recommendation engine and the Claude Fable copilot. See the [root README](../README.md) for setup.
+FastAPI service behind the RA chat: AMFI data pipeline, peer ranking, the fund lens and the copilot. See the [root README](../README.md) for setup and what's in the database.
 
 ```
 app/
-  api/          REST + SSE routes (investors, portfolio, chat, admin)
-  analytics/    NAV access, XIRR, FIFO lots, SIPs, portfolio view, peer ranking, overlap, RA Score
-  copilot/      system prompt, tools, guardrails, compliance post-processor, orchestrator
-  data/         AMFI scheme master + NAV history loaders, bulk upserts (COPY on Postgres)
-  ingest/       CAS import (casparser), demo portfolio
-  insights/     tax summary, nudges, goal maths
-  reco/         recommendation engine (diagnosis rules -> suitability-gated cards)
-  reference/    categories, tax rules (effective-dated), risk questionnaire, templates, suitability
-  services/     analyse(): one call that assembles everything above
+  api/          REST + SSE routes (investors, chat, admin)
+  analytics/    NAV access, peer ranking (rank-v0.2), fund lens
+  copilot/      system prompt, tools, guardrails, compliance post-processor, orchestrators (OpenAI, Claude)
+  data/         AMFI loaders: scheme master, NAV history, scheme details, TER; universe, name linking, disclosures
+  docs/         official documents: archive, text extraction, chunking, full-text search
+  reference/    SEBI categories, benchmark proxies, name normalisation
 sql/schema.sql  Postgres DDL (generated: python -m app.cli print-ddl)
 tests/          offline tests on a synthetic market
 ```
