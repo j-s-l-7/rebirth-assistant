@@ -10,18 +10,17 @@ from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.analytics.fund_lens import compare_funds, fund_lens, resolve_funds
 from app.analytics.lots import redemption_estimate
-from app.analytics.performance import benchmark_code, benchmark_label, ensure_metrics, scheme_metrics
 from app.config import get_settings
 from app.insights.goals import goal_plan
 from app.insights.nudges import nudges
 from app.insights.tax import tax_summary
 from app.models import Escalation, Investor, Scheme
 from app.reco.engine import run_recommendations
-from app.reference.categories import RISK_LABELS, get_category
+from app.reference.categories import get_category
 from app.reference.risk import BUCKET_LABELS, TEMPLATES, allowed_categories
 from app.services.analysis import Analysis, analyse
 
@@ -38,9 +37,16 @@ class HoldingsInput(_In):
     sort_by: Literal["value", "gain", "xirr"] = "value"
 
 
-class SchemeFactsInput(_In):
-    amfi_code: int | None = None
-    query: str | None = Field(default=None, max_length=120)
+class FindInput(_In):
+    query: str = Field(min_length=2, max_length=120)
+
+
+class FundInput(_In):
+    fund: str = Field(min_length=2, max_length=120, description="Fund name (e.g. 'Parag Parikh Flexi Cap') or AMFI scheme code")
+
+
+class CompareInput(_In):
+    funds: list[str] = Field(min_length=2, max_length=4, description="2-4 fund names or AMFI scheme codes")
 
 
 class RedemptionInput(_In):
@@ -73,10 +79,12 @@ def _schema(model: type[BaseModel]) -> dict:
 
 
 TOOL_SPECS: list[tuple[str, str, type[BaseModel], str]] = [
+    ("fund_lens", "Everything about one mutual fund relative to the other funds in its SEBI category: its rank among category peers, each metric (1/3/5-year returns, consistency, Sortino, volatility, worst fall, downside capture, expense ratio, index-likeness) beside the category median and quartiles with a plain-language standing, a D-profile (performance, consistency, risk, diversification, asset mix, cost), facts (AUM, launch date, minimum investment where loaded) and the category's top funds. Accepts a fund name or AMFI code; returns the matched fund and close alternatives.", FundInput, "Comparing the fund with its category"),
+    ("compare_funds", "Side-by-side comparison of 2-4 mutual funds (names or AMFI codes): each fund's category rank and key metrics with the category median and standing. Says whether they share a category (ranks across categories aren't comparable).", CompareInput, "Comparing the funds"),
+    ("find_funds", "Search mutual fund schemes by name. Returns matching schemes with AMFI code, plan, option and category; Regular-Growth plans in the peer set first.", FindInput, "Finding the fund"),
     ("get_portfolio_overview", "Portfolio totals: current value, invested, gain, XIRR, day change, look-through asset allocation (equity/debt/gold), category/AMC/plan split, active SIPs, gains realised this financial year, and the NAV date the values use.", NoInput, "Reading your portfolio"),
     ("get_holdings", "Every fund the investor holds with value, invested amount, gain, XIRR, weight, category, riskometer, SIP status, peer-ranking tier, performance vs its benchmark on the investor's own cashflows, typical exit load, lock-in and suitability for their risk profile.", HoldingsInput, "Going through your funds"),
     ("get_ra_score", "The RA Score (0-100) with its six dimensions (discipline, balance, risk fit, diversification, performance, efficiency): each with score, one-line summary, inputs and what would raise it.", NoInput, "Checking your RA Score"),
-    ("get_scheme_facts", "Facts about one scheme by AMFI code, or search schemes by name with `query`: category, plan, riskometer, latest NAV, trailing returns, benchmark returns, consistency, Sortino, max drawdown, peer tier, typical exit load, lock-in, and whether the investor holds it. Facts only - not a recommendation.", SchemeFactsInput, "Looking up the fund"),
     ("get_tax_summary", "Capital gains for the current financial year: realised short/long-term gains, the Rs 1.25 lakh equity LTCG exemption used and remaining, unrealised gains split by tax treatment, the LTCG harvesting opportunity, and lots turning long-term in the next 60 days. Estimates, not tax advice.", NoInput, "Working through your tax position"),
     ("estimate_redemption", "Simulate redeeming part or all of one holding today (FIFO): value, gain split by short/long-term, estimated tax, exit load, locked units and the date pending units turn long-term. Give amount_inr, units, or all_units=true.", RedemptionInput, "Estimating the redemption"),
     ("run_recommendations", "Run the recommendation engine on the investor's current portfolio and risk profile. Returns suitability-checked action cards (switch, stop/redirect SIP, start SIP, STP, review) with rationale, tax/exit-load estimates and priority. The only source of scheme suggestions.", NoInput, "Running the recommendation engine"),
@@ -147,37 +155,29 @@ class ToolContext:
     def _t_get_ra_score(self, _: NoInput) -> dict:
         return self._no_holdings() or self.analysis.score
 
-    def _t_get_scheme_facts(self, a: SchemeFactsInput) -> dict:
-        if a.amfi_code is None:
-            if not a.query:
-                return {"error": "Give amfi_code or query"}
-            terms = [t for t in a.query.split() if len(t) > 1][:6]
-            stmt = select(Scheme).where(*[Scheme.name.ilike(f"%{t}%") for t in terms])
-            matches = self.db.scalars(stmt.order_by(Scheme.plan_type.desc(), Scheme.option_type).limit(8)).all()
-            return {"matches": [{"amfi_code": s.amfi_code, "name": s.name, "plan": s.plan_type, "option": s.option_type,
-                                 "category": get_category(s.category_key).label} for s in matches]}
-        s = self.db.get(Scheme, a.amfi_code)
-        if s is None:
-            raise LookupError(f"No scheme with AMFI code {a.amfi_code}")
-        cat = get_category(s.category_key)
-        nb = self.analysis.nb
-        as_of = self.analysis.as_of
-        m = ensure_metrics(self.db, nb, {s.category_key: {s.amfi_code}}, as_of).get(s.amfi_code)
-        if m is None:
-            m, _ = scheme_metrics(nb, s.amfi_code, as_of, benchmark_code(s.category_key))
-        latest = nb.latest(s.amfi_code)
-        return {
-            "amfi_code": s.amfi_code, "name": s.name, "amc": s.amc_name, "category": cat.label, "plan": s.plan_type, "option": s.option_type,
-            "riskometer": RISK_LABELS.get(s.riskometer), "riskometer_basis": "category default; confirm on the scheme factsheet" if s.riskometer_source == "category_default" else s.riskometer_source,
-            "nav": latest[1] if latest else None, "nav_date": latest[0].isoformat() if latest else None,
-            "benchmark_proxy": benchmark_label(s.category_key),
-            "metrics": {k: v for k, v in m.items() if k != "rolling"},
-            "typical_exit_load": f"{cat.exit_load_pct:g}% within {cat.exit_load_days} days" if cat.exit_load_days else "None typical",
-            "lock_in_years": round(cat.lock_in_days / 365) if cat.lock_in_days else None,
-            "held_by_investor": s.amfi_code in {h.code for h in self.analysis.pv.holdings},
-            "in_recommendation_universe": s.in_universe,
-            "note": "Returns are annualised (CAGR) from AMFI NAVs; past performance does not indicate future returns.",
-        }
+    def _resolve(self, fund: str) -> tuple[int, list[dict]]:
+        """A name or AMFI code -> (code, close alternatives)."""
+        text = fund.strip()
+        if text.isdigit() and self.db.get(Scheme, int(text)):
+            return int(text), []
+        matches = resolve_funds(self.db, text)
+        if not matches:
+            raise LookupError(f"No mutual fund matches '{fund}'. Try find_funds with a shorter name.")
+        return matches[0]["amfi_code"], [m for m in matches[1:4] if m["name"] != matches[0]["name"]]
+
+    def _t_find_funds(self, a: FindInput) -> dict:
+        return {"matches": resolve_funds(self.db, a.query, limit=8)}
+
+    def _t_fund_lens(self, a: FundInput) -> dict:
+        code, alternatives = self._resolve(a.fund)
+        lens = fund_lens(self.db, code)
+        lens["matched_query"] = a.fund
+        lens["other_matches"] = alternatives
+        lens["held_by_investor"] = code in {h.code for h in self.analysis.pv.holdings}
+        return lens
+
+    def _t_compare_funds(self, a: CompareInput) -> dict:
+        return compare_funds(self.db, [self._resolve(f)[0] for f in a.funds])
 
     def _t_get_tax_summary(self, _: NoInput) -> dict:
         return self._no_holdings() or tax_summary(self.analysis)

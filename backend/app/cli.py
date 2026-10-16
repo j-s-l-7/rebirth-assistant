@@ -4,8 +4,14 @@
     python -m app.cli sync-schemes            # AMFI scheme master + today's NAVs (run daily ~23:30 IST)
     python -m app.cli sync-history --years 6  # bulk NAV history from AMFI (first load)
     python -m app.cli repair-history          # re-fetch months that came back empty/partial
+    python -m app.cli backfill-missing        # history for tracked schemes that have little or none
     python -m app.cli compute-metrics         # peer rankings for every category
-    python -m app.cli daily                   # sync-schemes + compute-metrics
+    python -m app.cli sync-scheme-details     # AMFI scheme master details (launch dates, minimums, ISINs)
+    python -m app.cli sync-ter --months 36    # AMFI total expense ratios (stored as change points)
+    python -m app.cli sync-performance        # AMFI fund performance vs official benchmarks
+    python -m app.cli sync-documents          # regulatory texts + AMFI monthly reports (originals + full text)
+    python -m app.cli search-docs "QUERY"     # full-text search over stored documents
+    python -m app.cli daily                   # all daily feeds, gap repair, universe refinement, rankings
     python -m app.cli create-demo
     python -m app.cli load-disclosures FILE.csv
     python -m app.cli stats
@@ -43,6 +49,33 @@ def compute_all_metrics(db: Session) -> dict:
     return {"as_of": as_of.isoformat(), "tiered_by_category": done}
 
 
+def run_daily(db: Session) -> dict:
+    """Every daily feed in dependency order. A failing step is recorded and the rest still
+    run: one flaky AMFI endpoint must not stop the NAV refresh."""
+    from app.data.amfi import ensure_history, repair_history, sync_scheme_master, tracked_codes
+    from app.data.scheme_details import sync_scheme_details
+    from app.data.ter import sync_ter
+    from app.data.universe import refine_universe
+
+    steps = [
+        ("scheme_details", lambda: sync_scheme_details(db)),
+        ("schemes", lambda: sync_scheme_master(db)),
+        ("repair", lambda: repair_history(db)),
+        ("new_schemes_history", lambda: {"backfilled": len(ensure_history(db, tracked_codes(db), min_points=30))}),
+        ("ter", lambda: sync_ter(db, months=1)),
+        ("universe", lambda: refine_universe(db)),
+        ("metrics", lambda: compute_all_metrics(db)),
+    ]
+    out: dict = {}
+    for name, step in steps:
+        try:
+            out[name] = step()
+        except Exception as exc:  # noqa: BLE001 - recorded, and the remaining steps still run
+            db.rollback()
+            out[name] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
 def print_ddl() -> None:
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.schema import CreateIndex, CreateTable
@@ -73,7 +106,18 @@ def main() -> None:
     h.add_argument("--years", type=int, default=None)
     h.add_argument("--workers", type=int, default=4)
     sub.add_parser("repair-history")
+    sub.add_parser("backfill-missing")
     sub.add_parser("compute-metrics")
+    sub.add_parser("sync-scheme-details")
+    t = sub.add_parser("sync-ter")
+    t.add_argument("--months", type=int, default=36)
+    sub.add_parser("sync-performance")
+    sub.add_parser("refine-universe")
+    docs = sub.add_parser("sync-documents")
+    docs.add_argument("--monthly-reports", type=int, default=24)
+    sd = sub.add_parser("search-docs")
+    sd.add_argument("query")
+    sd.add_argument("--limit", type=int, default=5)
     sub.add_parser("daily")
     sub.add_parser("create-demo")
     d = sub.add_parser("load-disclosures")
@@ -107,14 +151,39 @@ def main() -> None:
             from app.data.amfi import repair_history
 
             out = repair_history(db)
+        elif args.cmd == "backfill-missing":
+            from app.data.amfi import ensure_history, tracked_codes
+
+            filled = ensure_history(db, tracked_codes(db), min_points=30)
+            out = {"backfilled": len(filled)}
         elif args.cmd == "compute-metrics":
             out = compute_all_metrics(db)
+        elif args.cmd == "sync-scheme-details":
+            from app.data.scheme_details import sync_scheme_details
+
+            out = sync_scheme_details(db)
+        elif args.cmd == "sync-ter":
+            from app.data.ter import sync_ter
+
+            out = sync_ter(db, months=args.months, progress=lambda *a: print("  ", *a, flush=True))
+        elif args.cmd == "sync-performance":
+            from app.data.performance_feed import sync_performance
+
+            out = sync_performance(db)
+        elif args.cmd == "refine-universe":
+            from app.data.universe import refine_universe
+
+            out = refine_universe(db)
+        elif args.cmd == "sync-documents":
+            from app.docs.sources import sync_documents
+
+            out = sync_documents(db, monthly_reports=args.monthly_reports, progress=lambda *a: print("  ", *a, flush=True))
+        elif args.cmd == "search-docs":
+            from app.docs.search import search_documents
+
+            out = {"results": search_documents(db, args.query, limit=args.limit)}
         elif args.cmd == "daily":
-            from app.data.amfi import sync_scheme_master
-
-            from app.data.amfi import repair_history
-
-            out = {"schemes": sync_scheme_master(db), "repair": repair_history(db), "metrics": compute_all_metrics(db)}
+            out = run_daily(db)
         elif args.cmd == "create-demo":
             from app.ingest.demo import create_demo_investor
 

@@ -33,7 +33,7 @@ CORRECTIONS = {
     "free_review_claim": None,
 }
 
-DATA_TOOLS = {"get_portfolio_overview", "get_holdings", "get_scheme_facts", "get_ra_score", "run_recommendations", "get_overlap"}
+DATA_TOOLS = {"get_portfolio_overview", "get_holdings", "fund_lens", "compare_funds", "get_ra_score", "run_recommendations", "get_overlap"}
 
 
 def check_text(text: str) -> list[dict]:

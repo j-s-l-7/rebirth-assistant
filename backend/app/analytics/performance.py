@@ -1,30 +1,30 @@
 """Scheme metrics, within-category ranking (PRD §11.2) and the shadow-benchmark test.
 
-Factors available from public NAV data today: consistency (rolling 3-year returns vs
-peers), risk-adjusted return (3-year Sortino) and downside protection (downside capture
-vs the benchmark proxy, max drawdown). Portfolio quality, cost (TER) and stewardship
-need data feeds we don't have yet; their weights are redistributed and the omission is
-reported in every result (`factors_unavailable`).
+Factors: consistency (rolling 3-year returns vs peers), risk-adjusted return (3-year
+Sortino), downside protection (downside capture vs the benchmark proxy, max drawdown) and
+cost (the fund's Regular-plan total expense ratio from AMFI's TER disclosure, lower is
+better). Portfolio quality and stewardship need feeds we don't have yet; their weights are
+redistributed and every result lists what was unavailable (`factors_unavailable`).
 """
 
 import math
 from datetime import date, datetime, timedelta, timezone
 from statistics import mean, median, pstdev
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.analytics.navbook import NavBook
 from app.analytics.portfolio import HoldingView, external_cashflows
 from app.analytics.xirr import cagr, xirr
-from app.models import CategoryStat, Scheme, SchemeMetric
+from app.models import CategoryStat, Scheme, SchemeLink, SchemeMetric, SchemeTer
 from app.reference.categories import BENCHMARK_PROXIES, get_category
 from app.reference.tax import add_months
 
-MODEL_VERSION = "rank-v0.1"
+MODEL_VERSION = "rank-v0.2"
 RF_ANNUAL = 0.065
-WEIGHTS = {"consistency": 25, "risk_adjusted": 20, "downside": 20}
-FACTORS_UNAVAILABLE = ["portfolio_quality", "cost_ter", "stewardship"]
+WEIGHTS = {"consistency": 25, "risk_adjusted": 20, "downside": 20, "cost": 10}
+FACTORS_UNAVAILABLE = ["portfolio_quality", "stewardship"]
 # Funds need 3+ years of NAV history to be tiered (PRD §11.1). History is capped by the
 # loaded window (NAV_HISTORY_YEARS), so `nav_history_years` is not the fund's age.
 MIN_TRACK_YEARS = 3.0
@@ -38,6 +38,21 @@ def benchmark_code(category_key: str) -> int | None:
 def benchmark_label(category_key: str) -> str | None:
     key = get_category(category_key).benchmark
     return BENCHMARK_PROXIES[key]["label"] if key else None
+
+
+def regular_ter(db: Session, codes: set[int]) -> dict[int, float]:
+    """Latest Regular-plan TER (%) of each scheme's fund. Direct-plan codes get their fund's
+    Regular TER too, so cost is compared like for like across a category."""
+    if not codes:
+        return {}
+    latest = select(SchemeTer.nsdl_code, func.max(SchemeTer.effective_from).label("d")).group_by(SchemeTer.nsdl_code).subquery()
+    rows = db.execute(
+        select(SchemeLink.amfi_code, SchemeTer.r_ter)
+        .join(SchemeTer, SchemeTer.nsdl_code == SchemeLink.external_key)
+        .join(latest, (latest.c.nsdl_code == SchemeTer.nsdl_code) & (latest.c.d == SchemeTer.effective_from))
+        .where(SchemeLink.source == "ter", SchemeLink.amfi_code.in_(codes))
+    ).all()
+    return {code: float(ter) for code, ter in rows if ter is not None}
 
 
 def trailing_cagr(nb: NavBook, code: int, as_of: date, years: int) -> float | None:
@@ -106,6 +121,16 @@ def scheme_metrics(nb: NavBook, code: int, as_of: date, bench: int | None) -> tu
         active = [s - b for s, b in paired]
         if len(active) >= 24 and pstdev(active) > 0:
             m["info_ratio_3y"] = mean(active) / pstdev(active) * math.sqrt(12)
+            # How closely the fund moves with its index: a NAV-only read on diversification.
+            # High R-squared and low tracking error = index-like; low R-squared = concentrated/different.
+            fs, bs = [s for s, _ in paired], [b for _, b in paired]
+            mf, mb = mean(fs), mean(bs)
+            cov = mean((f - mf) * (b - mb) for f, b in paired)
+            var_b, var_f = pstdev(bs) ** 2, pstdev(fs) ** 2
+            if var_b > 0 and var_f > 0:
+                m["beta_3y"] = cov / var_b
+                m["r_squared_3y"] = cov * cov / (var_b * var_f)
+            m["tracking_error_3y"] = pstdev(active) * math.sqrt(12)
         for y in (1, 3, 5):
             m[f"bench_cagr_{y}y"] = trailing_cagr(nb, bench, as_of, y)
     return {k: (round(v, 6) if isinstance(v, float) else v) for k, v in m.items()}, _rolling(me)
@@ -140,8 +165,10 @@ def rank_category(db: Session, nb: NavBook, category_key: str, as_of: date, extr
     nb.preload(codes | ({bench} if bench else set()))
 
     metrics, rolling = {}, {}
+    ters = regular_ter(db, codes)
     for code in codes:
         metrics[code], rolling[code] = scheme_metrics(nb, code, as_of, bench)
+        metrics[code]["ter_regular"] = ters.get(code)
 
     # Consistency: share of rolling-3y windows (last 5y) in the top half of peers.
     months = sorted({mk for c in peers for mk in rolling[c] if mk > (add_months(as_of, -60).year, add_months(as_of, -60).month)})
@@ -161,6 +188,7 @@ def rank_category(db: Session, nb: NavBook, category_key: str, as_of: date, extr
     pct_sort = _pct_rank({c: metrics[c].get("sortino_3y") for c in ranked_pool})
     pct_dc = _pct_rank({c: metrics[c].get("downside_capture_3y") for c in ranked_pool}, higher_is_better=False)
     pct_dd = _pct_rank({c: metrics[c].get("max_dd_3y") for c in ranked_pool})  # less negative is better
+    pct_cost = _pct_rank({c: metrics[c].get("ter_regular") for c in ranked_pool}, higher_is_better=False)
 
     composites = {}
     for c in ranked_pool:
@@ -172,6 +200,8 @@ def rank_category(db: Session, nb: NavBook, category_key: str, as_of: date, extr
         down = [p for p in (pct_dc.get(c), pct_dd.get(c)) if p is not None]
         if down:
             parts["downside"] = mean(down)
+        if c in pct_cost:
+            parts["cost"] = pct_cost[c]
         if parts:
             w = sum(WEIGHTS[k] for k in parts)
             composites[c] = sum(WEIGHTS[k] * v for k, v in parts.items()) / w * 100
@@ -190,7 +220,7 @@ def rank_category(db: Session, nb: NavBook, category_key: str, as_of: date, extr
             below = sum(1 for s in peer_scores if s <= composites[c])
             m["tier"] = _tier(below / len(peer_scores)) if peer_scores else None
         m["model_version"] = MODEL_VERSION
-        m["factors_unavailable"] = FACTORS_UNAVAILABLE
+        m["factors_unavailable"] = FACTORS_UNAVAILABLE + ([] if m.get("ter_regular") is not None else ["cost_ter"])
 
     if persist and codes:
         db.execute(delete(SchemeMetric).where(SchemeMetric.amfi_code.in_(codes), SchemeMetric.as_of == as_of, SchemeMetric.model_version == MODEL_VERSION))
@@ -201,7 +231,7 @@ def rank_category(db: Session, nb: NavBook, category_key: str, as_of: date, extr
             stats = {
                 "rolling_medians": {f"{y}-{mo:02d}": round(v, 6) for (y, mo), v in medians.items()},
                 "peer_factors": {f: [metrics[c][f] for c in pool if metrics[c].get(f) is not None]
-                                 for f in ("consistency", "sortino_3y", "downside_capture_3y", "max_dd_3y")},
+                                 for f in ("consistency", "sortino_3y", "downside_capture_3y", "max_dd_3y", "ter_regular")},
                 "peer_composites": sorted(round(composites[p], 3) for p in peers if p in composites),
                 "peer_count": len(peers),
             }
@@ -218,13 +248,14 @@ def _pct_against(value: float | None, peer_values: list[float] | None, higher_is
     return worse / len(peer_values)
 
 
-def score_against_stats(nb: NavBook, code: int, category_key: str, as_of: date, stats: dict | None) -> dict:
+def score_against_stats(nb: NavBook, code: int, category_key: str, as_of: date, stats: dict | None, ter: float | None = None) -> dict:
     """Score one scheme against a cached peer distribution: needs only its own NAVs and its
     benchmark's, not every peer's. Without stats (or for non-peer categories) it returns the
     scheme's own metrics with no tier."""
     m, rolling = scheme_metrics(nb, code, as_of, benchmark_code(category_key))
+    m["ter_regular"] = ter
     m["model_version"] = MODEL_VERSION
-    m["factors_unavailable"] = FACTORS_UNAVAILABLE
+    m["factors_unavailable"] = FACTORS_UNAVAILABLE + ([] if ter is not None else ["cost_ter"])
     m["composite_score"] = None
     m["tier"] = "new" if m["nav_history_years"] < MIN_TRACK_YEARS else None
     if not stats or not get_category(category_key).peer_group:
@@ -245,6 +276,8 @@ def score_against_stats(nb: NavBook, code: int, category_key: str, as_of: date, 
                         _pct_against(m.get("max_dd_3y"), pf.get("max_dd_3y"))) if x is not None]
     if down:
         parts["downside"] = mean(down)
+    if (p := _pct_against(ter, pf.get("ter_regular"), higher_is_better=False)) is not None:
+        parts["cost"] = p
     if not parts:
         return m
     composite = sum(WEIGHTS[k] * v for k, v in parts.items()) / sum(WEIGHTS[k] for k in parts) * 100
@@ -295,8 +328,9 @@ def ensure_metrics(db: Session, nb: NavBook, codes_by_category: dict[str, set[in
             continue
         bench = benchmark_code(cat_key)
         nb.preload(missing | ({bench} if bench else set()))
+        ters = regular_ter(db, missing)
         for code in missing:
-            fresh[code] = out[code] = score_against_stats(nb, code, cat_key, as_of, stats)
+            fresh[code] = out[code] = score_against_stats(nb, code, cat_key, as_of, stats, ters.get(code))
     if fresh:
         db.execute(delete(SchemeMetric).where(SchemeMetric.amfi_code.in_(fresh), SchemeMetric.as_of == as_of, SchemeMetric.model_version == MODEL_VERSION))
         db.add_all(SchemeMetric(amfi_code=c, as_of=as_of, model_version=MODEL_VERSION, metrics=m, composite_score=m.get("composite_score"), tier=m.get("tier"))

@@ -17,7 +17,7 @@ from app.reference.categories import get_category
 from app.reference.risk import suitability
 
 METRIC_FIELDS = ("tier", "composite_score", "consistency", "cagr_1y", "cagr_3y", "cagr_5y", "bench_cagr_3y", "sortino_3y",
-                 "max_dd_3y", "downside_capture_3y", "nav_history_years", "peer_count", "factors_unavailable")
+                 "max_dd_3y", "downside_capture_3y", "ter_regular", "nav_history_years", "peer_count", "factors_unavailable")
 
 
 @dataclass

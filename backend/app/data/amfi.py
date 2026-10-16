@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.data.bulk import copy_nav_points, upsert
-from app.models import Holding, NavPoint, Scheme
+from app.models import Holding, NavPoint, Scheme, SchemeDetail
 from app.reference.categories import (
     BENCHMARK_PROXIES,
     EXCLUDED_NAME,
@@ -153,10 +153,13 @@ def _client() -> httpx.Client:
     )
 
 
-def is_investable(row: SchemeRow, category_key: str, plan: str, option: str) -> bool:
-    """PRD §11.1 universe filter (the parts knowable from the scheme master)."""
+def is_investable(row: SchemeRow, category_key: str, plan: str, option: str, latest_date: date | None = None) -> bool:
+    """PRD §11.1 universe filter (the parts knowable from the scheme master). A scheme that
+    hasn't published a NAV within 30 days of the file's latest date is dormant."""
+    fresh = row.nav is not None and row.nav_date is not None and (latest_date is None or (latest_date - row.nav_date).days <= 30)
     return (
-        row.open_ended
+        fresh
+        and row.open_ended
         and plan == "regular"
         and option == "growth"
         and category_key not in ("other", "other_debt", "fof_domestic")
@@ -175,13 +178,18 @@ def sync_scheme_master(db: Session) -> dict:
         rows = list(iter_rows(resp.text.splitlines()))
 
     proxy_codes = {p["amfi_code"] for p in BENCHMARK_PROXIES.values()}
+    latest_date = max((r.nav_date for r in rows if r.nav_date), default=None)
+    # The 2026 NAV file leaves Plan/Option blank for thousands of codes (base name only);
+    # the scheme-details master's NAV name ("... - Regular Growth") fills them in.
+    nav_names = dict(db.execute(select(SchemeDetail.amfi_code, SchemeDetail.nav_name)).all())
     scheme_rows, seen = [], set()
     for r in rows:
         if r.amfi_code in seen:
             continue
         seen.add(r.amfi_code)
         key = normalise_category(r.raw_category, r.name)
-        plan, option = normalise_plan(r.plan_raw, r.name), normalise_option(r.option_raw, r.name)
+        label = r.name if (r.plan_raw or r.option_raw) else (nav_names.get(r.amfi_code) or r.name)
+        plan, option = normalise_plan(r.plan_raw, label), normalise_option(r.option_raw, label)
         scheme_rows.append(
             {
                 "amfi_code": r.amfi_code,
@@ -197,7 +205,7 @@ def sync_scheme_master(db: Session) -> dict:
                 "latest_nav_date": r.nav_date,
                 "riskometer": get_category(key).riskometer,
                 "riskometer_source": "category_default",
-                "in_universe": is_investable(r, key, plan, option),
+                "in_universe": is_investable(r, key, plan, option, latest_date),
                 "is_benchmark_proxy": r.amfi_code in proxy_codes,
             }
         )
