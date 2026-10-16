@@ -40,12 +40,13 @@ Supabase Postgres, project `pvdbzvkmpbzixfhdrhnx` (ap-southeast-1). All RA table
 |---|---:|---:|---|---|
 | `scheme` | 14,377 | 10 MB | Every AMFI scheme code (one per plan + option): name, AMC, raw and normalised SEBI category, plan, option, ISINs, latest NAV, riskometer (category default), `in_universe`, `is_benchmark_proxy` | AMFI NAVAll, daily |
 | `nav_history` | 1,747,251 | 125 MB | Daily NAVs, **18 Oct 2019 → 15 Oct 2026**, for the investable universe and the benchmark proxies | AMFI NAV history report |
-| `scheme_metric` | 1,426 | 1.4 MB | Per-fund metrics and peer ranking (1/3/5-year returns, rolling consistency, Sortino, volatility, max drawdown, downside capture, beta, R², tracking error, TER → composite score and tier). Latest run: 15 Oct 2026, 1,137 funds, `rank-v0.2` | Computed from `nav_history` + `scheme_ter` |
-| `category_stat` | 43 | 0.2 MB | Per-category peer distributions (medians, quartiles), so any fund can be placed against its category quickly | Computed |
+| `scheme_metric` | 2,081 | 1.8 MB | Per-fund metrics and peer ranking (1/3/5-year returns, rolling consistency, Sortino, volatility, max drawdown, downside capture, beta, R², tracking error, expense ratio → composite score and tier). Current run (15 Oct 2026, `rank-v0.2`): 904 funds in 35 ranked categories, 727 ranked (3+ years of NAVs), 902 with an expense ratio. The 1,131 older `rank-v0.1` rows are ignored by the app | Computed from `nav_history` + `scheme_ter` |
+| `category_stat` | 71 | 0.2 MB | Per-category peer distributions (medians, quartiles), so any fund can be placed against its category quickly; 35 categories in the current run | Computed |
 | `scheme_detail` | 16,452 | 14 MB | AMC, scheme type and category, launch and closure dates, minimum investment, ISINs, plus the raw source row | AMFI scheme data CSV |
-| `scheme_ter` | 19,306 *(loading)* | 8 MB | Total expense ratio, Regular and Direct, with the breakdown (base, brokerage, transaction, statutory, 52(6A)(b)/(c)). Stored as change points: a row only when a value changes. Target window: Oct 2023 → today | AMFI TER disclosures |
-| `chat_session` / `chat_message` | 6 / 10 | <0.1 MB | Conversations: frozen system prompt, prompt version, model, the API transcript, display text, tool calls, guardrail verdicts, compliance flags, untraced numbers | The app |
-| `investor` | 8 | <0.1 MB | Chat owners: 7 browser guests and 1 legacy demo investor | The app |
+| `scheme_ter` | 148,988 | 62 MB | Total expense ratio, Regular and Direct, with the breakdown (base, brokerage, transaction, statutory, 52(6A)(b)/(c)), for 2,995 schemes, **1 Nov 2023 → 15 Oct 2026**. Stored as change points: a row only when a value changes (1.9 million daily values read) | AMFI TER disclosures |
+| `scheme_link` | 9,611 | 1.3 MB | Links each expense-ratio scheme name to its AMFI codes: 2,458 of 2,995 names matched (2,359 exact, 99 fuzzy); 537 unmatched, e.g. names carrying "Formerly known as …" | Computed |
+| `chat_session` / `chat_message` | 7 / 14 | <0.1 MB | Conversations: frozen system prompt, prompt version, model, the API transcript, display text, tool calls, guardrail verdicts, compliance flags, untraced numbers | The app |
+| `investor` | 9 | <0.1 MB | Chat owners: 8 browser guests and 1 legacy demo investor | The app |
 | `escalation` | 0 | — | Human-expert tickets opened from chat | The app |
 | `audit_log` | 0 | — | Audit trail (reserved) | The app |
 
@@ -58,7 +59,6 @@ Supabase Postgres, project `pvdbzvkmpbzixfhdrhnx` (ap-southeast-1). All RA table
 | `document`, `document_chunk` | Official documents (AMFI Code of Ethics, master circular, distributor FAQs, SEBI FAQs, AMFI monthly reports) are held back until legal confirms AMFI's terms of use allow storing them. The loader is ready (`sync-documents`); each document records its `source_terms`. |
 | `scheme_performance` | AMFI's fund-performance feed (official benchmark returns, AUM, official riskometer) blocks automated access (HTTP 403), so it isn't scraped. Proposed alternative: AMC monthly disclosures. |
 | `scheme_portfolio` | Stock-level holdings. Load AMC monthly portfolio disclosures with `load-disclosures FILE.csv`. |
-| `scheme_link` | Name → AMFI-code links for those external feeds. |
 
 ### Legacy tables (no longer used by the code)
 
@@ -74,7 +74,7 @@ The `public` schema still holds the old securities tables: `historical_prices` (
 DROP TABLE public.historical_prices, public.concalls, public.annual_reports, public.analyst_ratings;
 ```
 
-**Size:** the whole database is 225 MB, of which `mf` is 160 MB. The Supabase free tier allows 500 MB.
+**Size:** the whole database is 281 MB, of which `mf` is about 215 MB. The Supabase free tier allows 500 MB.
 
 ---
 
