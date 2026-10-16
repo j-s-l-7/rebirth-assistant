@@ -2,13 +2,6 @@
 
 An AI mutual-fund companion for Indian investors. Import every fund you own from one CAS statement, see an explainable **RA Score**, get suitability-checked suggestions with tax-aware sequencing, and ask **RA** (powered by Claude Fable 5.1) anything about your portfolio. Built to the [PRD + ERD](#context) for an AMFI-registered Mutual Fund Distributor.
 
-| Portfolio (dark) | Suggestions (light) |
-|---|---|
-| ![Dashboard](docs/screenshots/dashboard-dark.png) | ![Suggestions](docs/screenshots/suggestions-light.png) |
-
-> Status: **MVP (copilot-first)**. Real AMFI data end to end; order placement (BSE StAR MF), OTP sign-in and notifications are phase 2.
-
----
 
 ## What's in the MVP
 
