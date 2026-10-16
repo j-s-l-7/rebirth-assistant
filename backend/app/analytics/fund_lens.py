@@ -4,8 +4,8 @@ Powers questions like "how does X compare with other flexi caps?" with numbers t
 explains (it never computes them itself):
   - rank and percentile among category peers (the ranking model's composite)
   - each metric beside the category median and quartiles
-  - a "D" profile for a single fund: performance,
-    consistency, risk, diversification, asset mix and cost
+  - a "D" profile for a single fund: performance, consistency, risk, diversification,
+    asset mix and cost
   - the category's top funds for context
 
 Peers are the investable universe (open-ended Regular-plan Growth schemes). A Direct plan
