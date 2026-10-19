@@ -43,11 +43,11 @@ Routes:
 Judge the latest message, using the recent context only to resolve references like "yes, do that". Keep `reason` under 20 words."""
 
 _RULES: list[tuple[re.Pattern, str, str]] = [
-    (re.compile(r"\b(talk|speak|connect|chat)\s+(to|with)\s+(a\s+)?(human|person|expert|someone|advis[eo]r|agent|astick)\b|\bcall me\b", re.I), "escalate", "human_request"),
+    (re.compile(r"\b(talk|speak|connect|chat)\s+(to|with)\s+(a\s+)?(human|person|expert|someone|advis[eo]r|agent)\b|\bcall me\b", re.I), "escalate", "human_request"),
     (re.compile(r"\b(complain|complaint|grievance|fraud|cheated|mis-?sold|scam(med)?)\b", re.I), "escalate", "complaint"),
     (re.compile(r"\b(suicid\w*|kill myself|end my life|can'?t go on|lost everything)\b", re.I), "escalate", "distress"),
     (re.compile(r"\b(redeem|withdraw|sell)\s+(all|everything|entire|whole)\b", re.I), "escalate", "large_redemption"),
-    (re.compile(r"\bignore (all |your |the )?(previous |prior )?(instructions|rules)\b|\bsystem prompt\b|\bjailbreak\b|\bDAN\b", re.I), "prompt_injection", "prompt_injection"),
+    (re.compile(r"\bignore (all |your |the )?(previous |prior )?(instructions|rules)\b|\bsystem prompt\b|\bjailbreak\b|\b(?-i:DAN)\b", re.I), "prompt_injection", "prompt_injection"),
     (re.compile(r"\b(crypto|bitcoin|ethereum|btc|eth|dogecoin|nft)\b", re.I), "out_of_scope", "crypto"),
     (re.compile(r"\b(f&o|futures|options trading|call option|put option|intraday|nifty options)\b", re.I), "out_of_scope", "derivatives"),
     (re.compile(r"\b(which|what|best|good)\s+(stock|stocks|share|shares)\b|\bstock tips?\b|\bmultibagger\b|\b(should i )?buy (reliance|tcs|infosys|hdfc bank|adani)\b", re.I), "out_of_scope", "stocks"),

@@ -11,12 +11,13 @@ import math
 from datetime import date, timedelta
 from statistics import mean, median, pstdev
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.analytics.dates import add_months
 from app.analytics.navbook import NavBook
-from app.models import CategoryStat, Scheme, SchemeLink, SchemeMetric, SchemeTer
+from app.data.ter import latest_ter
+from app.models import CategoryStat, Scheme, SchemeMetric
 from app.reference.categories import BENCHMARK_PROXIES, get_category
 
 MODEL_VERSION = "rank-v0.2"
@@ -41,16 +42,7 @@ def benchmark_label(category_key: str) -> str | None:
 def regular_ter(db: Session, codes: set[int]) -> dict[int, float]:
     """Latest Regular-plan TER (%) of each scheme's fund. Direct-plan codes get their fund's
     Regular TER too, so cost is compared like for like across a category."""
-    if not codes:
-        return {}
-    latest = select(SchemeTer.nsdl_code, func.max(SchemeTer.effective_from).label("d")).group_by(SchemeTer.nsdl_code).subquery()
-    rows = db.execute(
-        select(SchemeLink.amfi_code, SchemeTer.r_ter)
-        .join(SchemeTer, SchemeTer.nsdl_code == SchemeLink.external_key)
-        .join(latest, (latest.c.nsdl_code == SchemeTer.nsdl_code) & (latest.c.d == SchemeTer.effective_from))
-        .where(SchemeLink.source == "ter", SchemeLink.amfi_code.in_(codes))
-    ).all()
-    return {code: float(ter) for code, ter in rows if ter is not None}
+    return {code: v["ter"] for code, v in latest_ter(db, codes, plan="regular").items()}
 
 
 def cagr(start_value: float, end_value: float, years: float) -> float | None:

@@ -2,11 +2,11 @@
 
 AMFI's NAV files carry both the 2017 SEBI category labels ("Equity Scheme - Large Cap
 Fund") and the 2026 relabelled ones ("Equity Schemes - Large Cap Fund", "Income/Debt
-Oriented Schemes - Short Term Fund", ...). Everything downstream (allocation, tax,
-riskometer defaults, suitability, peer groups) keys off the canonical `key` here.
+Oriented Schemes - Short Term Fund", ...). Everything downstream (peer groups,
+benchmarks, riskometer defaults, the asset-mix view) keys off the canonical `key` here.
 
-Defaults marked "typical" (riskometer, exit load) are category-level approximations
-used until per-scheme SID/KIM data is loaded; the UI and copilot label them as such.
+The riskometer is a category-level default used until a scheme's official riskometer is
+loaded; the fund lens labels its basis (`riskometer_basis`).
 """
 
 import re
@@ -28,13 +28,9 @@ class Category:
     key: str
     label: str
     group: str  # equity | hybrid | debt | commodity | international | solution | other
-    # Look-through asset mix used for allocation (weights sum to 1).
+    # Typical look-through asset mix, shown in the fund lens (weights sum to 1).
     mix: dict[str, float] = field(default_factory=dict)
     riskometer: str = "very_high"
-    tax_class: str = "equity"  # equity | debt | other  (see app.reference.tax)
-    exit_load_pct: float = 0.0
-    exit_load_days: int = 0
-    lock_in_days: int = 0
     benchmark: str | None = None  # key into BENCHMARK_PROXIES
     peer_group: bool = True  # meaningful to rank schemes against each other
 
@@ -44,60 +40,60 @@ D = {"debt": 1.0}
 
 _CATALOG: list[Category] = [
     # Equity
-    Category("large_cap", "Large Cap", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty50"),
-    Category("large_mid_cap", "Large & Mid Cap", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="largemidcap250"),
-    Category("mid_cap", "Mid Cap", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="midcap150"),
-    Category("small_cap", "Small Cap", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="smallcap250"),
-    Category("multi_cap", "Multi Cap", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500"),
-    Category("flexi_cap", "Flexi Cap", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500"),
-    Category("focused", "Focused", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500"),
-    Category("value", "Value", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500"),
-    Category("contra", "Contra", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500"),
-    Category("dividend_yield", "Dividend Yield", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500"),
-    Category("elss", "ELSS (Tax Saver)", "equity", E, lock_in_days=3 * 365, benchmark="nifty500"),
-    Category("sectoral", "Sectoral", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500", peer_group=False),
-    Category("thematic", "Thematic", "equity", E, exit_load_pct=1.0, exit_load_days=365, benchmark="nifty500", peer_group=False),
+    Category("large_cap", "Large Cap", "equity", E, benchmark="nifty50"),
+    Category("large_mid_cap", "Large & Mid Cap", "equity", E, benchmark="largemidcap250"),
+    Category("mid_cap", "Mid Cap", "equity", E, benchmark="midcap150"),
+    Category("small_cap", "Small Cap", "equity", E, benchmark="smallcap250"),
+    Category("multi_cap", "Multi Cap", "equity", E, benchmark="nifty500"),
+    Category("flexi_cap", "Flexi Cap", "equity", E, benchmark="nifty500"),
+    Category("focused", "Focused", "equity", E, benchmark="nifty500"),
+    Category("value", "Value", "equity", E, benchmark="nifty500"),
+    Category("contra", "Contra", "equity", E, benchmark="nifty500"),
+    Category("dividend_yield", "Dividend Yield", "equity", E, benchmark="nifty500"),
+    Category("elss", "ELSS (Tax Saver)", "equity", E, benchmark="nifty500"),
+    Category("sectoral", "Sectoral", "equity", E, benchmark="nifty500", peer_group=False),
+    Category("thematic", "Thematic", "equity", E, benchmark="nifty500", peer_group=False),
     Category("index_equity", "Equity Index Fund", "equity", E, peer_group=False),
     Category("etf_equity", "Equity ETF", "equity", E, peer_group=False),
-    # International (taxed as non-equity; counted as equity in allocation)
-    Category("intl_fof", "International FoF / ETF", "international", {"equity": 1.0}, tax_class="other", exit_load_pct=1.0, exit_load_days=365, peer_group=False),
+    # International
+    Category("intl_fof", "International FoF / ETF", "international", {"equity": 1.0}, peer_group=False),
     # Hybrid
-    Category("aggressive_hybrid", "Aggressive Hybrid", "hybrid", {"equity": 0.75, "debt": 0.25}, exit_load_pct=1.0, exit_load_days=365),
-    Category("balanced_hybrid", "Balanced Hybrid", "hybrid", {"equity": 0.5, "debt": 0.5}, riskometer="high", tax_class="other", exit_load_pct=1.0, exit_load_days=365),
-    Category("conservative_hybrid", "Conservative Hybrid", "hybrid", {"equity": 0.2, "debt": 0.8}, riskometer="moderately_high", tax_class="debt", exit_load_pct=1.0, exit_load_days=365),
-    Category("dynamic_asset_allocation", "Balanced Advantage / Dynamic Asset Allocation", "hybrid", {"equity": 0.5, "debt": 0.5}, exit_load_pct=1.0, exit_load_days=365),
-    Category("multi_asset", "Multi Asset Allocation", "hybrid", {"equity": 0.55, "debt": 0.25, "gold": 0.20}, tax_class="other", exit_load_pct=1.0, exit_load_days=365),
-    Category("arbitrage", "Arbitrage", "hybrid", D, riskometer="low", exit_load_pct=0.25, exit_load_days=30),
-    Category("equity_savings", "Equity Savings", "hybrid", {"equity": 0.35, "debt": 0.65}, riskometer="moderately_high", exit_load_pct=1.0, exit_load_days=365),
-    # Debt (gains on units bought from 1 Apr 2023 are slab-taxed: see app.reference.tax)
-    Category("overnight", "Overnight", "debt", D, riskometer="low", tax_class="debt"),
-    Category("liquid", "Liquid", "debt", D, riskometer="low_to_moderate", tax_class="debt", exit_load_pct=0.007, exit_load_days=7),
-    Category("ultra_short", "Ultra Short Duration", "debt", D, riskometer="low_to_moderate", tax_class="debt"),
-    Category("low_duration", "Low Duration", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("money_market", "Money Market", "debt", D, riskometer="low_to_moderate", tax_class="debt"),
-    Category("short_duration", "Short Duration", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("medium_duration", "Medium Duration", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("medium_long_duration", "Medium to Long Duration", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("long_duration", "Long Duration", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("dynamic_bond", "Dynamic Bond", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("corporate_bond", "Corporate Bond", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("credit_risk", "Credit Risk", "debt", D, riskometer="high", tax_class="debt", exit_load_pct=1.0, exit_load_days=365),
-    Category("banking_psu", "Banking & PSU", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("gilt", "Gilt", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("gilt_10y", "Gilt (10-year Constant Maturity)", "debt", D, riskometer="moderate", tax_class="debt"),
-    Category("floater", "Floater", "debt", D, riskometer="low_to_moderate", tax_class="debt"),
-    Category("index_debt", "Debt Index / Target Maturity", "debt", D, riskometer="low_to_moderate", tax_class="debt", peer_group=False),
-    Category("etf_debt", "Debt ETF", "debt", D, riskometer="low_to_moderate", tax_class="debt", peer_group=False),
-    Category("other_debt", "Other Debt", "debt", D, riskometer="moderate", tax_class="debt", peer_group=False),
+    Category("aggressive_hybrid", "Aggressive Hybrid", "hybrid", {"equity": 0.75, "debt": 0.25}),
+    Category("balanced_hybrid", "Balanced Hybrid", "hybrid", {"equity": 0.5, "debt": 0.5}, riskometer="high"),
+    Category("conservative_hybrid", "Conservative Hybrid", "hybrid", {"equity": 0.2, "debt": 0.8}, riskometer="moderately_high"),
+    Category("dynamic_asset_allocation", "Balanced Advantage / Dynamic Asset Allocation", "hybrid", {"equity": 0.5, "debt": 0.5}),
+    Category("multi_asset", "Multi Asset Allocation", "hybrid", {"equity": 0.55, "debt": 0.25, "gold": 0.20}),
+    Category("arbitrage", "Arbitrage", "hybrid", D, riskometer="low"),
+    Category("equity_savings", "Equity Savings", "hybrid", {"equity": 0.35, "debt": 0.65}, riskometer="moderately_high"),
+    # Debt
+    Category("overnight", "Overnight", "debt", D, riskometer="low"),
+    Category("liquid", "Liquid", "debt", D, riskometer="low_to_moderate"),
+    Category("ultra_short", "Ultra Short Duration", "debt", D, riskometer="low_to_moderate"),
+    Category("low_duration", "Low Duration", "debt", D, riskometer="moderate"),
+    Category("money_market", "Money Market", "debt", D, riskometer="low_to_moderate"),
+    Category("short_duration", "Short Duration", "debt", D, riskometer="moderate"),
+    Category("medium_duration", "Medium Duration", "debt", D, riskometer="moderate"),
+    Category("medium_long_duration", "Medium to Long Duration", "debt", D, riskometer="moderate"),
+    Category("long_duration", "Long Duration", "debt", D, riskometer="moderate"),
+    Category("dynamic_bond", "Dynamic Bond", "debt", D, riskometer="moderate"),
+    Category("corporate_bond", "Corporate Bond", "debt", D, riskometer="moderate"),
+    Category("credit_risk", "Credit Risk", "debt", D, riskometer="high"),
+    Category("banking_psu", "Banking & PSU", "debt", D, riskometer="moderate"),
+    Category("gilt", "Gilt", "debt", D, riskometer="moderate"),
+    Category("gilt_10y", "Gilt (10-year Constant Maturity)", "debt", D, riskometer="moderate"),
+    Category("floater", "Floater", "debt", D, riskometer="low_to_moderate"),
+    Category("index_debt", "Debt Index / Target Maturity", "debt", D, riskometer="low_to_moderate", peer_group=False),
+    Category("etf_debt", "Debt ETF", "debt", D, riskometer="low_to_moderate", peer_group=False),
+    Category("other_debt", "Other Debt", "debt", D, riskometer="moderate", peer_group=False),
     # Commodities
-    Category("gold", "Gold", "commodity", {"gold": 1.0}, riskometer="high", tax_class="other"),
-    Category("silver", "Silver", "commodity", {"gold": 1.0}, tax_class="other", peer_group=False),
+    Category("gold", "Gold", "commodity", {"gold": 1.0}, riskometer="high"),
+    Category("silver", "Silver", "commodity", {"gold": 1.0}, peer_group=False),
     # Solution-oriented / life-cycle
-    Category("retirement", "Retirement", "solution", {"equity": 0.7, "debt": 0.3}, lock_in_days=5 * 365, peer_group=False),
-    Category("children", "Children's", "solution", {"equity": 0.7, "debt": 0.3}, lock_in_days=5 * 365, peer_group=False),
-    Category("life_cycle", "Life Cycle", "solution", {"equity": 0.5, "debt": 0.5}, riskometer="high", tax_class="other", peer_group=False),
-    Category("fof_domestic", "Domestic Fund of Funds", "other", {"equity": 0.5, "debt": 0.5}, riskometer="high", tax_class="other", peer_group=False),
-    Category("other", "Other", "other", {"equity": 0.5, "debt": 0.5}, riskometer="high", tax_class="other", peer_group=False),
+    Category("retirement", "Retirement", "solution", {"equity": 0.7, "debt": 0.3}, peer_group=False),
+    Category("children", "Children's", "solution", {"equity": 0.7, "debt": 0.3}, peer_group=False),
+    Category("life_cycle", "Life Cycle", "solution", {"equity": 0.5, "debt": 0.5}, riskometer="high", peer_group=False),
+    Category("fof_domestic", "Domestic Fund of Funds", "other", {"equity": 0.5, "debt": 0.5}, riskometer="high", peer_group=False),
+    Category("other", "Other", "other", {"equity": 0.5, "debt": 0.5}, riskometer="high", peer_group=False),
 ]
 
 CATEGORIES: dict[str, Category] = {c.key: c for c in _CATALOG}

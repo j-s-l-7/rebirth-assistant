@@ -75,7 +75,8 @@ def _refresh_metadata(doc: Document, *, source: str, doc_type: str, title: str, 
 def ingest(db: Session, *, url: str, source: str, doc_type: str, title: str, data: bytes, content_type: str,
            published_on: date | None = None, amc_name: str | None = None, amfi_code: int | None = None,
            meta: dict | None = None) -> tuple[Document, str]:
-    """Like `ingest_document`, but also says what happened: "new", "updated" or "unchanged"."""
+    """Archive `data` and store its full text as ordered chunks, replacing earlier chunks if the file at `url`
+    changed. Returns the document and what happened: "new", "updated" or "unchanged" (same url and sha256)."""
     sha = hashlib.sha256(data).hexdigest()
     doc = db.scalar(select(Document).where(Document.url == url))
     if doc is not None and doc.sha256 == sha and _is_current(doc):
@@ -134,13 +135,3 @@ def ingest(db: Session, *, url: str, source: str, doc_type: str, title: str, dat
         raise
     log.info("%s %s: %d pages, %d chunks, %d chars", status, url, info["pages"] or 0, len(chunks), text_chars)
     return doc, status
-
-
-def ingest_document(db: Session, *, url: str, source: str, doc_type: str, title: str, data: bytes, content_type: str,
-                    published_on: date | None = None, amc_name: str | None = None, amfi_code: int | None = None,
-                    meta: dict | None = None) -> Document:
-    """Archive `data` and store its full text as ordered chunks, replacing earlier chunks if the
-    file at `url` changed. Unchanged files (same url and sha256) are returned as they are."""
-    doc, _ = ingest(db, url=url, source=source, doc_type=doc_type, title=title, data=data, content_type=content_type,
-                    published_on=published_on, amc_name=amc_name, amfi_code=amfi_code, meta=meta)
-    return doc

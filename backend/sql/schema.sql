@@ -53,15 +53,9 @@ CREATE INDEX ix_document_doc_type ON document (doc_type);
 CREATE TABLE investor (
 	id VARCHAR(32) NOT NULL, 
 	display_name VARCHAR(120) NOT NULL, 
-	pan_enc BYTEA, 
-	pan_hash VARCHAR(64), 
-	pan_masked VARCHAR(16), 
-	risk_bucket VARCHAR(32), 
-	tax_slab_pct FLOAT, 
 	is_demo BOOLEAN NOT NULL, 
 	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	PRIMARY KEY (id), 
-	UNIQUE (pan_hash)
+	PRIMARY KEY (id)
 );
 
 CREATE TABLE scheme (
@@ -84,12 +78,12 @@ CREATE TABLE scheme (
 	PRIMARY KEY (amfi_code)
 );
 
-CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
 CREATE INDEX ix_scheme_category_key ON scheme (category_key);
-CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
-CREATE INDEX ix_scheme_isin_growth ON scheme (isin_growth);
 CREATE INDEX ix_scheme_isin_reinvest ON scheme (isin_reinvest);
 CREATE INDEX ix_scheme_name ON scheme (name);
+CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
+CREATE INDEX ix_scheme_isin_growth ON scheme (isin_growth);
+CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
 
 CREATE TABLE scheme_detail (
 	amfi_code INTEGER NOT NULL, 

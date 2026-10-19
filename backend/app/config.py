@@ -42,10 +42,9 @@ class Settings(BaseSettings):
     # Compliance identity shown in UI and disclosures.
     distributor_name: str = "[DistCo] Pvt Ltd"
     arn: str = "ARN-PENDING"
-    euin: str = "E000000"
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
-    # When set, /admin/* endpoints require the X-Admin-Token header.
+    # /admin/* endpoints require this value in the X-Admin-Token header; unset, they are disabled.
     admin_token: str | None = None
 
 

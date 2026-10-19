@@ -8,7 +8,6 @@
     python -m app.cli compute-metrics         # peer rankings for every category
     python -m app.cli sync-scheme-details     # AMFI scheme master details (launch dates, minimums, ISINs)
     python -m app.cli sync-ter --months 36    # AMFI total expense ratios (stored as change points)
-    python -m app.cli sync-performance        # AMFI fund performance vs official benchmarks
     python -m app.cli sync-documents          # regulatory texts + AMFI monthly reports (originals + full text)
     python -m app.cli search-docs "QUERY"     # full-text search over stored documents
     python -m app.cli daily                   # all daily feeds, gap repair, universe refinement, rankings
@@ -110,7 +109,6 @@ def main() -> None:
     sub.add_parser("sync-scheme-details")
     t = sub.add_parser("sync-ter")
     t.add_argument("--months", type=int, default=36)
-    sub.add_parser("sync-performance")
     sub.add_parser("refine-universe")
     docs = sub.add_parser("sync-documents")
     docs.add_argument("--monthly-reports", type=int, default=24)
@@ -164,10 +162,6 @@ def main() -> None:
             from app.data.ter import sync_ter
 
             out = sync_ter(db, months=args.months, progress=lambda *a: print("  ", *a, flush=True))
-        elif args.cmd == "sync-performance":
-            from app.data.performance_feed import sync_performance
-
-            out = sync_performance(db)
         elif args.cmd == "refine-universe":
             from app.data.universe import refine_universe
 

@@ -23,7 +23,8 @@ from sqlalchemy.orm import Session
 from app.analytics.navbook import NavBook
 from app.analytics.performance import benchmark_label, ensure_metrics, latest_metrics
 from app.data.linking import norm_name
-from app.models import NavPoint, Scheme, SchemeDetail, SchemeHolding, SchemeLink, SchemePerformance, SchemeTer
+from app.data.ter import current_ter_rows
+from app.models import NavPoint, Scheme, SchemeDetail, SchemeHolding, SchemeLink, SchemePerformance
 from app.reference.categories import RISK_LABELS, get_category
 
 # SEBI category mandates in brief (structural diversification rules). Summary wording; the
@@ -159,13 +160,11 @@ def _peer_metrics(db: Session, category_key: str) -> dict[int, dict]:
 
 
 def _ter_pair(db: Session, code: int) -> dict | None:
-    row = db.execute(
-        select(SchemeTer).join(SchemeLink, (SchemeLink.external_key == SchemeTer.nsdl_code) & (SchemeLink.source == "ter"))
-        .where(SchemeLink.amfi_code == code).order_by(SchemeTer.effective_from.desc()).limit(1)
-    ).scalar()
+    row = current_ter_rows(db, [code]).get(code)
     if row is None:
         return None
-    return {"regular": row.r_ter, "direct": row.d_ter, "regular_breakdown": {"base": row.r_ber, "brokerage": row.r_brokerage,
+    # AMFI writes 0 for a plan the scheme doesn't have: report it as absent, not as a free fund.
+    return {"regular": row.r_ter or None, "direct": row.d_ter or None, "regular_breakdown": {"base": row.r_ber, "brokerage": row.r_brokerage,
             "transaction": row.r_transaction, "statutory": row.r_statutory}, "effective_from": row.effective_from.isoformat()}
 
 

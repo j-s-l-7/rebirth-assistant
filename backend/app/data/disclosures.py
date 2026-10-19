@@ -4,19 +4,23 @@ import csv
 from datetime import date
 from pathlib import Path
 
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.models import SchemeHolding
 
 
 def load_disclosure_csv(db: Session, path: Path) -> int:
-    """CSV columns: amfi_code, disclosure_month (YYYY-MM-DD), security_isin, security_name, sector, weight_pct."""
-    n = 0
+    """CSV columns: amfi_code, disclosure_month (YYYY-MM-DD), security_isin, security_name, sector, weight_pct.
+
+    A file holds complete portfolios: each (amfi_code, disclosure_month) in it replaces what is stored for that
+    pair, so loading the same file twice keeps one copy."""
     with open(path, newline="", encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            db.add(SchemeHolding(amfi_code=int(row["amfi_code"]), disclosure_month=date.fromisoformat(row["disclosure_month"]),
-                                 security_isin=row.get("security_isin") or None, security_name=row["security_name"],
-                                 sector=row.get("sector") or None, weight_pct=float(row["weight_pct"])))
-            n += 1
+        rows = [SchemeHolding(amfi_code=int(r["amfi_code"]), disclosure_month=date.fromisoformat(r["disclosure_month"]),
+                              security_isin=r.get("security_isin") or None, security_name=r["security_name"],
+                              sector=r.get("sector") or None, weight_pct=float(r["weight_pct"])) for r in csv.DictReader(fh)]
+    for code, month in {(h.amfi_code, h.disclosure_month) for h in rows}:
+        db.execute(delete(SchemeHolding).where(SchemeHolding.amfi_code == code, SchemeHolding.disclosure_month == month))
+    db.add_all(rows)
     db.commit()
-    return n
+    return len(rows)

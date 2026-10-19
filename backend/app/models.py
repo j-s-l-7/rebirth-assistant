@@ -1,4 +1,4 @@
-"""ORM models: the MVP subset of the PRD ERD (§14), plus goals and escalations.
+"""ORM models: the subset of the PRD ERD (§14) the chat uses, plus escalations.
 
 Money is stored as NUMERIC and read back as float (asdecimal=False): exact enough
 for display/analytics, and Postgres keeps NUMERIC precision at rest.
@@ -37,10 +37,6 @@ def Money():  # noqa: N802 - column factory
     return Numeric(18, 2, asdecimal=False)
 
 
-def Units():  # noqa: N802
-    return Numeric(18, 4, asdecimal=False)
-
-
 def Nav():  # noqa: N802
     return Numeric(14, 4, asdecimal=False)
 
@@ -54,11 +50,8 @@ class Investor(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
     # Shown in the UI only. Never sent to the LLM (PRD §14.5 LLM boundary).
     display_name: Mapped[str] = mapped_column(String(120), default="Investor")
-    pan_enc: Mapped[bytes | None] = mapped_column()
-    pan_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
-    pan_masked: Mapped[str | None] = mapped_column(String(16))
-    risk_bucket: Mapped[str | None] = mapped_column(String(32))
-    tax_slab_pct: Mapped[float | None] = mapped_column(Float)
+    # Legacy (demo investors of the earlier portfolio app). Kept because the production column is
+    # NOT NULL without a server default; drop both together in a migration.
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
