@@ -79,9 +79,9 @@ CREATE TABLE scheme (
 );
 
 CREATE INDEX ix_scheme_category_key ON scheme (category_key);
+CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
 CREATE INDEX ix_scheme_isin_reinvest ON scheme (isin_reinvest);
 CREATE INDEX ix_scheme_name ON scheme (name);
-CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
 CREATE INDEX ix_scheme_isin_growth ON scheme (isin_growth);
 CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
 
@@ -222,11 +222,18 @@ CREATE TABLE scheme_portfolio (
 	security_isin VARCHAR(12), 
 	security_name VARCHAR(160) NOT NULL, 
 	sector VARCHAR(80), 
+	industry VARCHAR(120), 
+	asset_class VARCHAR(20), 
 	weight_pct FLOAT NOT NULL, 
+	market_value_inr FLOAT, 
+	quantity FLOAT, 
+	rating VARCHAR(40), 
+	source_url TEXT, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(amfi_code) REFERENCES scheme (amfi_code)
 );
 
+CREATE INDEX ix_scheme_portfolio_security_isin ON scheme_portfolio (security_isin);
 CREATE INDEX ix_scheme_portfolio_amfi_code ON scheme_portfolio (amfi_code);
 
 CREATE TABLE chat_message (

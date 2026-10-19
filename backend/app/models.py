@@ -91,17 +91,27 @@ class NavPoint(Base):
 
 
 class SchemeHolding(Base):
-    """Monthly portfolio disclosure lines (stock-level overlap). PRD: SCHEME_PORTFOLIO."""
+    """One line of a scheme's monthly portfolio disclosure: the look-through holdings behind exposure and
+    overlap analysis. A portfolio belongs to the scheme, so it is stored once, under the scheme's
+    Regular-Growth code; other plans/options of the scheme share it. `weight_pct` is % of net assets as
+    disclosed (negative for short derivative positions, e.g. the hedge leg of arbitrage)."""
 
     __tablename__ = "scheme_portfolio"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
     amfi_code: Mapped[int] = mapped_column(ForeignKey("scheme.amfi_code"), index=True)
-    disclosure_month: Mapped[date] = mapped_column(Date)
-    security_isin: Mapped[str | None] = mapped_column(String(12))
+    disclosure_month: Mapped[date] = mapped_column(Date)  # last day of the month disclosed
+    security_isin: Mapped[str | None] = mapped_column(String(12), index=True)
     security_name: Mapped[str] = mapped_column(String(160))
-    sector: Mapped[str | None] = mapped_column(String(80))
+    sector: Mapped[str | None] = mapped_column(String(80))  # normalised roll-up of `industry`
+    industry: Mapped[str | None] = mapped_column(String(120))  # as disclosed, normalised spelling
+    # equity | debt | money_market | cash | derivative | reit_invit | mf_units | foreign_equity | gold | other
+    asset_class: Mapped[str | None] = mapped_column(String(20))
     weight_pct: Mapped[float] = mapped_column(Float)
+    market_value_inr: Mapped[float | None] = mapped_column(Float)
+    quantity: Mapped[float | None] = mapped_column(Float)
+    rating: Mapped[str | None] = mapped_column(String(40))
+    source_url: Mapped[str | None] = mapped_column(Text)
 
 
 class SchemeMetric(Base):
