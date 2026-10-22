@@ -7,6 +7,8 @@ the investor is processed here.
 import json
 import re
 
+from app.analytics.xray import BANNED_WORDS, EXPERT_NOTE
+
 _NEGATED = re.compile(r"\b(not|no|never|isn't|aren't|don't|doesn't|cannot|can't|nothing|neither|nor|without)\b[^.!?]{0,40}$", re.I)
 
 RULES: list[tuple[str, re.Pattern, str]] = [
@@ -27,6 +29,11 @@ CORRECTIONS = {
 
 DATA_TOOLS = {"fund_lens", "compare_funds"}
 
+# Portfolio X-ray answers must not read as a call to act (analytics/xray.py BANNED_WORDS).
+_ACTION = re.compile(r"\b(" + "|".join(re.escape(w) for w in BANNED_WORDS) + r")", re.I)
+_SENTENCE_END = re.compile(r"(?<=[.!?])(?=\s)|(?<=\n)")
+ACTION_NOTE = "RA shares facts, not buy, sell or switch calls. " + EXPERT_NOTE
+
 
 def check_text(text: str) -> list[dict]:
     flags = []
@@ -39,14 +46,34 @@ def check_text(text: str) -> list[dict]:
     return flags
 
 
+def _action_flags(sentence: str) -> list[dict]:
+    return [{"code": "action_language", "severity": "high", "match": m.group(0)} for m in _ACTION.finditer(sentence)
+            if not _NEGATED.search(sentence[max(0, m.start() - 60): m.start()])]
+
+
+def _strip_action_language(text: str) -> tuple[str, list[dict]]:
+    """Drop every sentence with a non-negated banned word; the flags record what was dropped."""
+    flags, kept = [], []
+    for sentence in _SENTENCE_END.split(text):
+        found = _action_flags(sentence)
+        flags += found
+        kept.append("" if found else sentence)
+    return ("".join(kept) if flags else text), flags
+
+
 def post_process(text: str, tools_used: set[str]) -> tuple[str, list[dict], list[str]]:
-    flags = check_text(text)
+    flags, shown = check_text(text), text
+    if "portfolio_xray" in tools_used:
+        shown, action = _strip_action_language(text)
+        if action:
+            flags += action
+            shown = shown.strip() + "\n\n" + ACTION_NOTE
     corrections = []
     for f in flags:
         note = CORRECTIONS.get(f["code"])
         if note and note not in corrections:
             corrections.append(note)
-    display = text.rstrip()
+    display = shown.rstrip()
     if corrections:
         display += "\n\n" + " ".join(corrections)
 
