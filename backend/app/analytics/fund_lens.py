@@ -255,7 +255,7 @@ def fund_lens(db: Session, amfi_code: int, nb: NavBook | None = None) -> dict:
                             "tracking_error_pct": by_key["tracking_error_3y"]["fund"], "beta": by_key["beta_3y"]["fund"],
                             "category_median_r_squared": by_key["r_squared_3y"].get("category_median"),
                             "stock_level": holdings,
-                            "basis": "portfolio disclosure" if holdings else "NAV behaviour vs index (stock-level holdings not loaded yet)"},
+                            "basis": "portfolio disclosure" if holdings else "NAV behaviour vs index (no portfolio disclosure loaded for this fund; other funds may have one)"},
         "asset_mix": {"look_through_pct": {k: round(v * 100) for k, v in cat.mix.items()}, "category_rule": CATEGORY_RULES.get(s.category_key)},
         "cost": {"standing": by_key["ter_regular"].get("standing"), "expense_ratio": ter,
                  "category_median_regular_pct": by_key["ter_regular"].get("category_median")},
