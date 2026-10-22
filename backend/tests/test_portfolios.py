@@ -22,6 +22,7 @@ FX = Path(__file__).parent / "fixtures" / "portfolios"
 NIPPON = (FX / "nippon_2026_09_sample.xls").read_bytes()
 PPFAS = (FX / "ppfas_2026_09_sample.xlsx").read_bytes()
 DSP = (FX / "dsp_2026_09_stacked_sample.xls").read_bytes()
+ICICI = (FX / "icici_2026_09_sample.zip").read_bytes()
 TEST_CODES = 870000  # Scheme rows created here use amfi_codes 870000..870999
 SEP = date(2026, 9, 30)
 
@@ -90,6 +91,16 @@ def test_dsp_two_schemes_stacked_in_one_xls_sheet():
     gold = s["DSP Gold ETF"]
     assert gold.holdings[0].asset_class == "gold" and gold.holdings[0].isin is None  # IDIA... fails the check digit
     assert gold.issues == ["invalid ISIN IDIA00190068 for GOLD"]
+
+
+def test_icici_group_totals_are_headings_not_holdings():
+    """ICICI prints a total on every group heading ("Equity & Equity Related", "Reverse Repo") above its rows."""
+    s = by_name(sp for n, b in pf.workbooks(ICICI, "icici.zip") for sp in pf.parse_workbook(b, n))
+    assert set(s) == {"ICICI Prudential Mid Cap Fund", "ICICI Prudential Overnight Fund", "ICICI Prudential Liquid Fund"}
+    assert all(x.month == SEP and x.quarantine is None and abs(x.weight_sum - 100) < 0.1 for x in s.values())
+    assert len(s["ICICI Prudential Mid Cap Fund"].holdings) == 82 and s["ICICI Prudential Mid Cap Fund"].holdings[0].name == "Apar Industries Ltd."
+    assert len(s["ICICI Prudential Overnight Fund"].holdings) == 8  # 3 T-bills, 3 repos, TREPS, net current assets
+    assert not any(h.name.lower() in ("reverse repo", "treasury bills") for x in s.values() for h in x.holdings)
 
 
 def test_zip_of_workbooks_is_read_member_by_member():

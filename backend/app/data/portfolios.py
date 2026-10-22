@@ -328,6 +328,19 @@ def _find_name(rows: list[list]) -> str | None:
     return None
 
 
+def _is_group_total(below: list[list], weight_col: int, weight: float) -> bool:
+    """True when the unbroken run of rows under a row has weights that add up to the row's own weight."""
+    run = 0.0
+    for r in below:
+        w = _number(r[weight_col]) if weight_col < len(r) else None
+        if w is None:
+            return False
+        run += w
+        if abs(run - weight) <= 1e-4 * abs(weight) + 1e-9:
+            return True
+    return False
+
+
 def _parse_table(rows: list[list], cols: dict[str, int], scheme: ParsedScheme) -> int:
     """Read holdings from `rows` (just below the header) into `scheme`; returns the number of rows consumed."""
     def cell(row, key):
@@ -349,7 +362,10 @@ def _parse_table(rows: list[list], cols: dict[str, int], scheme: ParsedScheme) -
             continue
         weight = _number(cell(row, "weight"))
         raw_isin = _text(cell(row, "isin")).upper()
-        if weight is None:
+        # a group heading that carries its own total (ICICI: "Equity & Equity Related ... 97.9%") is a heading, not a holding
+        group_total = weight is not None and not raw_isin and _number(cell(row, "quantity")) is None and (
+            not _CASH_ROW.search(low) or _is_group_total(rows[n + 1 :], cols["weight"], weight))  # "Reverse Repo" over its repos
+        if weight is None or group_total:
             if raw_isin:
                 scheme.issues.append(f"no numeric weight for {label} ({raw_isin}): {cell(row, 'weight')!r}")
             elif (cls := section_class(label)) is not None:
