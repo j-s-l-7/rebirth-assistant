@@ -141,6 +141,7 @@ Without an API key the chat says it isn't connected.
 | `daily` | All daily feeds, gap repair, universe refinement, rankings |
 | `sync-documents` / `search-docs "QUERY"` | Official documents (held for legal) / full-text search |
 | `load-disclosures FILE.csv` | AMC portfolio disclosures → stock-level holdings |
+| `load-portfolios PATH_OR_URL [...]` | AMC monthly portfolio workbooks (.xls/.xlsx/.zip, any layout) → holdings under each scheme's Regular-Growth code; reports quarantined and unmatched schemes |
 | `stats` / `print-ddl` | Data counts / Postgres DDL |
 
 ### API
