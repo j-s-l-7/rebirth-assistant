@@ -22,6 +22,25 @@ type Xray = {
   errors: ApiError[];
   assumptions: string[];
 };
+type Holding = { fund: string; amount_inr?: number };
+type Conc = Xray["concentration"];
+type Delta = { name: string; before_pct: number; after_pct: number; delta_pct: number };
+type Sim = {
+  before: { concentration: Conc };
+  after: { concentration: Conc };
+  deltas: { securities: Delta[]; sectors: Delta[]; industries: Delta[] };
+  changes_applied: { from_fund: string; to_fund: string; amount_inr: number; applied: boolean; reason: string | null }[];
+  missing_details: Missing[];
+  errors: ApiError[];
+};
+type Screen = {
+  category: string | null;
+  criterion: string;
+  note: string;
+  candidates: { name: string; overlap_pct: number; expense_ratio_regular_pct: number | null; disclosure_month: string | null }[];
+  missing_details: Missing[];
+  errors: ApiError[];
+};
 type Row = { id: number; fund: string; amount: string };
 
 const MAX_ROWS = 20;
@@ -237,6 +256,166 @@ function Results({ r }: { r: Xray }) {
   );
 }
 
+type Change = { id: number; from: string; to: string; amount: string };
+
+function WhatIf({ holdings }: { holdings: Holding[] }) {
+  const names = holdings.map((h) => h.fund);
+  const [changes, setChanges] = useState<Change[]>([{ id: 1, from: "", to: "", amount: "" }]);
+  const [nextId, setNextId] = useState(2);
+  const [sim, setSim] = useState<Sim | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (id: number, p: Partial<Change>) => setChanges((cs) => cs.map((c) => (c.id === id ? { ...c, ...p } : c)));
+  const valid = changes.filter((c) => c.from && c.to.trim() && Number(c.amount) > 0);
+
+  async function run() {
+    setBusy(true);
+    setError("");
+    const body = {
+      holdings,
+      changes: valid.map((c) => ({ from_fund: c.from, to_fund: c.to.trim(), amount_inr: Number(c.amount) })),
+    };
+    try {
+      setSim(await api<Sim>("/portfolio/simulate", { method: "POST", body: JSON.stringify(body) }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const concRow = (label: string, c: Conc) => [label, pct(c.top10_pct), c.effective_stocks.toFixed(1), pct(c.top_sector_pct)];
+  const deltaTable = (title: string, d: Delta[]) => (
+    <div className="mt-4">
+      <h3 className="mb-1 text-sm text-muted">{title}</h3>
+      <Table
+        head={["Name", "Before %", "After %", "Change"]}
+        rows={d.slice(0, 10).map((x) => [x.name, pct(x.before_pct, 2), pct(x.after_pct, 2), `${x.delta_pct > 0 ? "+" : ""}${x.delta_pct.toFixed(2)}`])}
+      />
+    </div>
+  );
+
+  return (
+    <Section title="Try my own what-if">
+      <p className="mb-2 text-sm text-muted">Move an amount from one of your funds to another and see how the exposures change.</p>
+      <div className="space-y-2">
+        {changes.map((c, i) => (
+          <div key={c.id} className="flex gap-2">
+            <select
+              aria-label={`From fund, change ${i + 1}`}
+              className={`${input} flex-1`}
+              value={c.from}
+              onChange={(e) => set(c.id, { from: e.target.value })}
+            >
+              <option value="">From fund</option>
+              {names.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <div className="flex-1">
+              <FundInput label={`To fund, change ${i + 1}`} value={c.to} onChange={(v) => set(c.id, { to: v })} />
+            </div>
+            <input
+              aria-label={`Amount in rupees, change ${i + 1}`}
+              className={`${input} !w-32`}
+              inputMode="decimal"
+              placeholder="Amount (INR)"
+              value={c.amount}
+              onChange={(e) => set(c.id, { amount: e.target.value })}
+            />
+            <button type="button" className={linkBtn} disabled={changes.length === 1} onClick={() => setChanges((cs) => cs.filter((x) => x.id !== c.id))}>
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        className={`${linkBtn} mt-2 mr-4`}
+        disabled={changes.length >= 10}
+        onClick={() => {
+          setChanges((cs) => [...cs, { id: nextId, from: "", to: "", amount: "" }]);
+          setNextId(nextId + 1);
+        }}
+      >
+        + Add change
+      </button>
+      <button type="button" className={btn} disabled={busy || valid.length === 0} onClick={run}>
+        {busy ? "Working..." : "Show what-if"}
+      </button>
+      {error ? <p className="mt-2 text-sm text-bad">{error}</p> : null}
+      {sim ? (
+        <div className="mt-4">
+          <Table
+            head={["", "Top 10 securities", "Effective number of stocks", "Top sector"]}
+            rows={[concRow("Before", sim.before.concentration), concRow("After", sim.after.concentration)]}
+          />
+          {sim.changes_applied.some((c) => !c.applied) ? (
+            <div className="mt-4">
+              <h3 className="mb-1 text-sm text-muted">Changes not applied</h3>
+              <ul className="list-disc space-y-1 pl-5 text-sm">
+                {sim.changes_applied
+                  .filter((c) => !c.applied)
+                  .map((c, i) => (
+                    <li key={i}>
+                      {c.from_fund} to {c.to_fund}, {c.amount_inr}: {c.reason}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+          <Problems errors={sim.errors} missing={sim.missing_details} />
+          {deltaTable("Securities", sim.deltas.securities)}
+          {deltaTable("Sectors", sim.deltas.sectors)}
+          {deltaTable("Industries", sim.deltas.industries)}
+        </div>
+      ) : null}
+    </Section>
+  );
+}
+
+function LowerOverlap({ holdings }: { holdings: Holding[] }) {
+  const [res, setRes] = useState<Screen | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function run() {
+    setBusy(true);
+    setError("");
+    try {
+      setRes(await api<Screen>("/portfolio/screen", { method: "POST", body: JSON.stringify({ holdings }) }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="Funds with lower overlap">
+      <button type="button" className={btn} disabled={busy || holdings.length === 0} onClick={run}>
+        {busy ? "Working..." : "Show lower-overlap funds"}
+      </button>
+      {error ? <p className="mt-2 text-sm text-bad">{error}</p> : null}
+      {res ? (
+        <div className="mt-4">
+          <p className="mb-2 text-sm">
+            {res.category ? `${res.category}: ` : ""}
+            {res.criterion}. {res.note}
+          </p>
+          <Table
+            head={["Fund", "Overlap", "Expense ratio (Regular)", "Disclosure month"]}
+            rows={res.candidates.map((c) => [c.name, pct(c.overlap_pct), pct(c.expense_ratio_regular_pct, 2), c.disclosure_month ?? "-"])}
+          />
+          <Problems errors={res.errors} missing={res.missing_details} />
+        </div>
+      ) : null}
+    </Section>
+  );
+}
+
 /** Portfolio X-ray: look-through exposure, overlap and concentration from AMC monthly disclosures. */
 export default function XrayPage() {
   const [rows, setRows] = useState<Row[]>([{ id: 1, fund: "", amount: "" }]);
@@ -364,6 +543,8 @@ export default function XrayPage() {
         </div>
 
         {result ? <Results r={result} /> : null}
+        {result ? <WhatIf holdings={holdings} /> : null}
+        {result ? <LowerOverlap holdings={holdings} /> : null}
       </main>
       <footer className="mt-12 border-t border-line pt-4 text-xs text-muted">
         Information from AMC monthly portfolio disclosures. This is not a recommendation to act. A human expert (EUIN
