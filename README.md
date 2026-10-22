@@ -58,7 +58,7 @@ Supabase Postgres, project `pvdbzvkmpbzixfhdrhnx` (ap-southeast-1). All RA table
 |---|---|
 | `document`, `document_chunk` | Official documents (AMFI Code of Ethics, master circular, distributor FAQs, SEBI FAQs, AMFI monthly reports) are held back until legal confirms AMFI's terms of use allow storing them. The loader is ready (`sync-documents`); each document records its `source_terms`. |
 | `scheme_performance` | AMFI's fund-performance feed (official benchmark returns, AUM, official riskometer) blocks automated access (HTTP 403), so it isn't scraped. Proposed alternative: AMC monthly disclosures. |
-| `scheme_portfolio` | Stock-level holdings. Load AMC monthly portfolio disclosures with `load-disclosures FILE.csv`. |
+| `scheme_portfolio` | Stock-level holdings. Load AMC monthly portfolio disclosures with `load-disclosures FILE.csv`. Loaded so far: Nippon India, PPFAS, DSP; HDFC blocked; ICICI Pru, SBI, ABSL, Kotak, Axis, Mirae, UTI, Motilal need a manual download (page URLs in `backend/app/data/portfolio_sources.py`). |
 
 ### Legacy tables (no longer used by the code)
 
