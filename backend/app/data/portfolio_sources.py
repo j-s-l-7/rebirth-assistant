@@ -1,6 +1,11 @@
 """Where each AMC publishes its monthly portfolio file, and how far automated fetching got (Oct 2026).
 
-Loaded and fetched by hand so far: Nippon India, PPFAS, DSP. Feed a downloaded file to
+Loaded so far: Nippon India, PPFAS, DSP, ICICI (direct from the AMC, Sep 2026) and, from the MIT-licensed
+mirror github.com/subscriptionmanager26-png/fund-disclosures (Aug 2026 files; sha256 equals the repo's manifest,
+which matched the AMC's own file for the two we re-downloaded), SBI, Mirae, Franklin, Baroda BNP Paribas, PGIM,
+JM, Abakkus. Not loaded: Union (loader links 0 of 32 files), Navi (hashes differ from its manifest), UTI (the
+mirror's file holds exposure sheets, not scheme portfolios). Mirror files are not independently verified for
+SBI and Mirae because their robots.txt disallows automated downloads. Feed a downloaded file to
 `uv run python -m app.cli load-portfolios PATH`. Blocked AMCs are never retried or worked around.
 """
 
