@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef } from "react";
 import Composer, { focusInput } from "@/components/chat/Composer";
 import EmptyState from "@/components/chat/EmptyState";
@@ -29,17 +30,22 @@ export default function ChatPage() {
           <Logo size={24} />
           <span className="font-serif text-lg">RA</span>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            newChat();
-            focusInput(inputRef.current);
-          }}
-          disabled={busy || !ready}
-          className="-mr-3 rounded-full px-3 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
-        >
-          New chat
-        </button>
+        <div className="-mr-3 flex items-center">
+          <Link href="/xray" className="rounded-full px-3 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand">
+            Portfolio X-ray
+          </Link>
+          <button
+            type="button"
+            onClick={() => {
+              newChat();
+              focusInput(inputRef.current);
+            }}
+            disabled={busy || !ready}
+            className="rounded-full px-3 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
+          >
+            New chat
+          </button>
+        </div>
       </header>
 
       <main className="min-h-0 flex-1">
