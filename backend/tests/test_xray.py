@@ -3,9 +3,12 @@
 from dataclasses import dataclass
 from datetime import date
 
+import pytest
 from pytest import approx
 
-from app.analytics.xray import concentration, coverage, exposure, pairwise_overlap
+from app.analytics.xray import (
+    BANNED_WORDS, concentration, coverage, exposure, objective_checks, observations, pairwise_overlap,
+)
 
 
 @dataclass
@@ -165,3 +168,79 @@ def test_coverage_missing_and_stale():
         "funds_without_disclosure": ["C"],
         "stale_disclosures": [{"fund": "B", "disclosure_month": "2026-07"}],
     }
+
+
+def _two_fund_exposure():
+    # Same book as test_two_long_only_funds: X 28, Y 38, Z 12, W 12, Cash 10; Financials 40, IT 38, Energy 12.
+    holdings = {
+        "A": [Row("INE1", "X Bank", "Financials", "Banks", "equity", 40),
+              Row("INE2", "Y Soft", "IT", "Software", "equity", 30),
+              Row("INE3", "Z Bank", "Financials", "Banks", "equity", 20),
+              Row(None, "Cash", None, None, "cash", 10)],
+        "B": [Row("INE1", "X Bank", "Financials", "Banks", "equity", 10),
+              Row("INE2", "Y Soft", "IT", "Software", "equity", 50),
+              Row("INE4", "W Oil", "Energy", "Oil", "equity", 30),
+              Row(None, "Cash", None, None, "cash", 10)],
+    }
+    return holdings, exposure(holdings, {"A": 60_000, "B": 40_000})
+
+
+def test_objective_within():
+    _, ex = _two_fund_exposure()
+    assert objective_checks(ex, {"max_security_pct": 40, "max_sector_pct": 45}) == [
+        {"check": "max_security_pct", "status": "within", "item": "Y Soft", "actual_pct": approx(38),
+         "limit_pct": 40, "contributors": ["A", "B"]},
+        {"check": "max_sector_pct", "status": "within", "item": "Financials", "actual_pct": approx(40),
+         "limit_pct": 45, "contributors": ["A", "B"]},
+    ]
+
+
+def test_objective_exceeds_and_amc_skipped_without_amcs():
+    _, ex = _two_fund_exposure()
+    checks = objective_checks(ex, {"max_industry_pct": 30, "max_amc_pct": 10})
+    assert checks == [{"check": "max_industry_pct", "status": "exceeds", "item": "Banks", "actual_pct": approx(40),
+                       "limit_pct": 30, "contributors": ["A", "B"]}]
+
+
+def test_objective_avoid_present():
+    _, ex = _two_fund_exposure()
+    assert objective_checks(ex, {"avoid": ["w oil", "Banks", "Nope"]}) == [
+        {"check": "avoid", "status": "present", "item": "W Oil", "actual_pct": approx(12), "contributors": ["B"]},
+        {"check": "avoid", "status": "present", "item": "Banks", "actual_pct": approx(40),
+         "contributors": ["A", "B"]},
+    ]
+
+
+@pytest.mark.parametrize("objective", [None, {}, {"avoid": [], "max_security_pct": None}])
+def test_objective_empty(objective):
+    assert objective_checks({}, objective) == [{"check": "no_limits_set", "status": "info"}]
+
+
+def test_observations_threshold_and_numbers():
+    holdings, ex = _two_fund_exposure()
+    ov = pairwise_overlap(holdings)  # A/B overlap 40
+    cov = coverage({"A": 60_000, "B": 40_000}, holdings, {"A": "2026-09", "B": "2026-09"}, date(2026, 10, 1))
+    assert observations(ex, ov, concentration(ex, ov), cov) == []
+    [obs] = observations(ex, ov, concentration(ex, ov), cov, overlap_threshold_pct=40)
+    assert obs["code"] == "high_overlap" and obs["funds"] == ["A", "B"]
+    assert "40.0%" in obs["text"] and "2 common securities" in obs["text"] and "EUIN" in obs["text"]
+
+
+def _all_texts():
+    """Every observation and objective-check output the code can produce, keyed by code / status."""
+    holdings, ex = _two_fund_exposure()
+    ov = pairwise_overlap(holdings)
+    cov = coverage({"A": 60_000, "B": 40_000, "C": 10_000}, holdings, {"A": "2026-09", "B": "2026-05"},
+                   date(2026, 10, 1))
+    out = {o["code"]: o["text"] for o in observations(ex, ov, concentration(ex, ov), cov, overlap_threshold_pct=0)}
+    checks = objective_checks(ex, {"max_security_pct": 50, "max_sector_pct": 10, "avoid": ["Y Soft"]})
+    checks += objective_checks(ex, None)
+    out.update({c["status"]: str(c) for c in checks})
+    return out
+
+
+@pytest.mark.parametrize("code", ["high_overlap", "low_coverage", "stale_disclosure",
+                                  "within", "exceeds", "present", "info"])
+def test_wording_guard(code):
+    text = _all_texts()[code].lower()
+    assert [w for w in BANNED_WORDS if w in text] == []

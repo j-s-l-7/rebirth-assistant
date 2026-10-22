@@ -9,6 +9,12 @@ from collections import defaultdict
 from itertools import combinations
 
 UNCLASSIFIED = "Unclassified"
+# Wording no X-ray text may contain (case-insensitive substrings); reused by the wording guard and chat tool.
+BANNED_WORDS = ("buy", "sell", "switch", "should", "recommend", "advise", "advice", "better", "best", "ideal",
+                "exit", "redeem", "invest in")
+LIMITS = {"max_security_pct": "securities", "max_sector_pct": "sectors", "max_industry_pct": "industries",
+          "max_amc_pct": "amcs"}
+EXPERT_NOTE = "A human expert (EUIN holder) can go through this with you at no cost."
 
 
 def _get(row, key):
@@ -111,3 +117,55 @@ def coverage(fund_values, holdings, disclosure_months, today):
         "funds_without_disclosure": [f for f in fund_values if not holdings.get(f)],
         "stale_disclosures": stale,
     }
+
+
+def objective_checks(exposures, objective):
+    """Compare exposure() output with the investor's own limits; limits are only compared, never judged.
+
+    Each max_* limit reports the largest item in its group (Unclassified and ISIN-less lines excluded) as
+    within | exceeds. Each `avoid` name found (case-insensitive) in securities, sectors or industries is present."""
+    objective = {k: v for k, v in (objective or {}).items() if v not in (None, [], "")}
+    if not objective:
+        return [{"check": "no_limits_set", "status": "info"}]
+    checks = []
+    for key, group in LIMITS.items():
+        if key not in objective:
+            continue
+        items = [e for e in exposures.get(group) or []
+                 if e["name"] != UNCLASSIFIED and (group != "securities" or e.get("isin"))]
+        if not items:
+            continue
+        top, limit = max(items, key=lambda e: e["pct"]), objective[key]
+        checks.append({"check": key, "status": "exceeds" if top["pct"] > limit else "within", "item": top["name"],
+                       "actual_pct": top["pct"], "limit_pct": limit, "contributors": top.get("funds", [])})
+    for name in objective.get("avoid", []):
+        for group in ("securities", "sectors", "industries"):
+            hit = next((e for e in exposures.get(group, []) if e["name"].lower() == name.lower()), None)
+            if hit:
+                checks.append({"check": "avoid", "status": "present", "item": hit["name"],
+                               "actual_pct": hit["pct"], "contributors": hit.get("funds", [])})
+                break
+    return checks
+
+
+def observations(exposures, overlap, concentration, coverage, overlap_threshold_pct=50):
+    """Neutral, factual notes: high_overlap (pairs at or above the threshold), low_coverage, stale_disclosure.
+    Text states numbers and the disclosure basis and never suggests an action."""
+    out = []
+    for p in overlap:
+        if p["overlap_pct"] >= overlap_threshold_pct:
+            out.append({"code": "high_overlap", "funds": [p["fund_a"], p["fund_b"]], "text": (
+                f"{p['fund_a']} and {p['fund_b']} share {p['overlap_pct']:.1f}% of their portfolios by weight "
+                f"({p['common_securities']} common securities), based on each fund's latest holdings disclosure. "
+                + EXPERT_NOTE)})
+    if coverage["covered_value_pct"] < 100:
+        missing = coverage["funds_without_disclosure"]
+        out.append({"code": "low_coverage", "funds": missing, "text": (
+            f"Holdings disclosures cover {coverage['covered_value_pct']:.1f}% of portfolio value; no disclosure is "
+            f"available for {', '.join(missing)}, so exposure figures leave out that value.")})
+    stale = coverage["stale_disclosures"]
+    if stale:
+        out.append({"code": "stale_disclosure", "funds": [s["fund"] for s in stale], "text": (
+            "Holdings for " + ", ".join(f"{s['fund']} ({s['disclosure_month']})" for s in stale)
+            + " come from disclosures more than two months old; their figures reflect those months.")})
+    return out
