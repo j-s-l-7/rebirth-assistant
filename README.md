@@ -22,9 +22,9 @@ The LLM explains; deterministic tools supply every number.
 
 | Tool | Returns |
 |---|---|
-| `fund_lens` | One fund vs its category: rank, metrics vs median/quartiles, D-profile, facts, top peers |
-| `compare_funds` | 2–4 funds' ranks and key metrics with category medians |
-| `find_funds` | Fuzzy name search → AMFI code, plan, option, category |
+| `fund_lens` | One fund vs its category: rank, metrics vs median/quartiles, D-profile, facts, top peers; when holdings are loaded, top 5 holdings and sectors with the disclosure month |
+| `compare_funds` | 2–4 funds' ranks and key metrics with category medians; holdings overlap between the funds when all have holdings loaded (otherwise names the ones missing) |
+| `find_funds` | Fuzzy name search (a weak single match is returned as "ambiguous" with candidates, never picked silently) → AMFI code, plan, option, category |
 | `search_documents` | Full-text passages from stored official documents (none loaded yet, see below) |
 | `portfolio_xray` | Look-through of the investor's own funds from each fund's latest monthly disclosure: top securities, sectors, overlap, concentration, checks against the investor's own limits; their own what-if moves or a low-overlap screen if asked |
 | `request_expert` | Opens an expert ticket (free, reply within 1 business day) |
