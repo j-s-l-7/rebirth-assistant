@@ -26,6 +26,7 @@ The LLM explains; deterministic tools supply every number.
 | `compare_funds` | 2–4 funds' ranks and key metrics with category medians |
 | `find_funds` | Fuzzy name search → AMFI code, plan, option, category |
 | `search_documents` | Full-text passages from stored official documents (none loaded yet, see below) |
+| `portfolio_xray` | Look-through of the investor's own funds from each fund's latest monthly disclosure: top securities, sectors, overlap, concentration, checks against the investor's own limits; their own what-if moves or a low-overlap screen if asked |
 | `request_expert` | Opens an expert ticket (free, reply within 1 business day) |
 
 ---
@@ -58,7 +59,7 @@ Supabase Postgres, project `pvdbzvkmpbzixfhdrhnx` (ap-southeast-1). All RA table
 |---|---|
 | `document`, `document_chunk` | Official documents (AMFI Code of Ethics, master circular, distributor FAQs, SEBI FAQs, AMFI monthly reports) are held back until legal confirms AMFI's terms of use allow storing them. The loader is ready (`sync-documents`); each document records its `source_terms`. |
 | `scheme_performance` | AMFI's fund-performance feed (official benchmark returns, AUM, official riskometer) blocks automated access (HTTP 403), so it isn't scraped. Proposed alternative: AMC monthly disclosures. |
-| `scheme_portfolio` | Stock-level holdings. Load AMC monthly portfolio disclosures with `load-disclosures FILE.csv`. Loaded so far: Nippon India, PPFAS, DSP, ICICI Pru (Sep 2026, 113 schemes; ETFs have no Regular-Growth plan so are unlinked); HDFC blocked; SBI, ABSL, Kotak, Axis, Mirae, UTI, Motilal need a manual download (page URLs in `backend/app/data/portfolio_sources.py`). |
+| `scheme_portfolio` | Stock-level holdings (security, ISIN, sector, industry, asset class, weight, value, source) behind the X-ray. Load AMC monthly workbooks with `load-portfolios`. Loaded: Nippon India, PPFAS, DSP, ICICI Pru (Sep 2026) and, from the MIT mirror github.com/subscriptionmanager26-png/fund-disclosures (Aug 2026, sha256 matched to its manifest), SBI, Mirae, Franklin, Baroda BNP, PGIM, JM, Abakkus. Not loaded: HDFC (blocked), Kotak, ABSL, Axis, UTI, Union, Navi (see `portfolio_sources.py`). |
 
 ### Legacy tables (no longer used by the code)
 
@@ -77,6 +78,14 @@ DROP TABLE public.historical_prices, public.concalls, public.annual_reports, pub
 **Size:** the whole database is 281 MB, of which `mf` is about 215 MB. The Supabase free tier allows 500 MB.
 
 ---
+
+## Portfolio X-ray
+
+Page `/xray` (and the `portfolio_xray` chat tool): enter funds with amounts, optionally your own limits (max single security, sector, industry; names to avoid). It shows exposure by security, sector, industry and asset class, overlap between each pair of funds, concentration (top-10, effective number of stocks), and where a limit you set is exceeded. You can try your own what-if (move ₹X from fund A to B) and list funds with the lowest overlap with your holdings. Maths: `backend/app/analytics/xray.py` (pure functions; exposure E(s) = Σ value × weight, overlap = Σ min(weights)).
+
+Rules it follows: facts and comparisons only, no buy/sell/switch wording (a banned-word test covers every generated string); every number states the fund's disclosure month; the lowest-overlap list is labelled "one criterion, not a recommendation" and never picks one fund; funds without a loaded disclosure are reported as such, never estimated; a human expert (EUIN holder) is offered.
+
+Coverage today (local DB): holdings for 467 of 1,640 investable funds across 12 of 53 AMCs. Sources and gaps per AMC are in `backend/app/data/portfolio_sources.py`.
 
 ## Architecture
 
@@ -146,7 +155,7 @@ Without an API key the chat says it isn't connected.
 
 ### API
 
-`POST /api/investors` (guest) · `GET /api/investors/{id}` · `GET|POST /api/investors/{id}/chat/sessions` · `GET|POST /api/chat/sessions/{id}/messages` (POST streams SSE: `status`, `text`, `done`, `error`) · `GET /api/meta/data-status` · `/api/admin/*` (sync jobs, `ADMIN_TOKEN`).
+`POST /api/investors` (guest) · `GET /api/investors/{id}` · `GET|POST /api/investors/{id}/chat/sessions` · `GET|POST /api/chat/sessions/{id}/messages` (POST streams SSE: `status`, `text`, `done`, `error`) · `GET /api/meta/data-status` · `GET /api/health/ready` (data freshness) · `POST /api/portfolio/{xray,simulate,screen}` · `GET /api/funds/search?q=` · `/api/admin/*` (sync jobs, `ADMIN_TOKEN`).
 
 ---
 
@@ -166,7 +175,9 @@ cd backend && uv run python ../evals/run_evals.py    # real LLM calls: costs mon
 
 | Next | Why |
 |---|---|
-| AUM, official riskometer and stock holdings from the top AMCs' monthly disclosures | Fills the blocked performance feed; real stock-level diversification |
+| Holdings for the remaining AMCs (HDFC, Kotak, ABSL, Axis, UTI, Bandhan, Tata), a monthly refresh job, load into Supabase | Wider X-ray coverage; production has none yet |
+| AUM and official riskometer | Fills the blocked performance feed |
+| CAS upload (casparser) | Funds and units without typing |
 | Load official documents once legal clears AMFI's terms | `search_documents` answers on rules with citations |
 | Sign-in (Supabase Auth phone OTP) | Guests today; chats tied to a browser |
 | Eval set to 150 prompts; weekly human review sample | PRD release gate |
