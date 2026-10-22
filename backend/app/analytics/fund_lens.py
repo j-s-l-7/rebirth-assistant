@@ -145,10 +145,9 @@ def resolve_funds(db: Session, query: str, limit: int = 6) -> list[dict]:
 def is_weak_match(query: str, name: str, clear: int = 85) -> bool:
     """True when `name` is not a clear match for `query`: a query word is missing from it, or it carries
     extra distinguishing words (e.g. 'US', 'Equity') the query lacks."""
-    q, n = norm_name(query), norm_name(name)
-    if fuzz.token_sort_ratio(q, n) >= clear:
+    qt, nt = set(norm_name(query).split()) - GENERIC_WORDS, set(norm_name(name).split()) - GENERIC_WORDS
+    if fuzz.token_sort_ratio(" ".join(qt), " ".join(nt)) >= clear:
         return False
-    qt, nt = set(q.split()) - GENERIC_WORDS, set(n.split()) - GENERIC_WORDS
     return bool(qt ^ nt)
 
 
