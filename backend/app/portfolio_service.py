@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analytics import xray
-from app.analytics.fund_lens import regular_growth_sibling, resolve_funds
+from app.analytics.fund_lens import candidate_names, is_weak_match, regular_growth_sibling, resolve_funds
 from app.analytics.performance import MODEL_VERSION, latest_metrics, regular_ter
 from app.data.linking import norm_name
 from app.models import Scheme, SchemeHolding
@@ -30,10 +30,9 @@ def resolve_one(db: Session, fund: str) -> tuple[Scheme | None, dict | None]:
     if not matches:
         return None, {"fund": text, "code": "not_found", "message": f"No mutual fund matches '{text}'."}
     bases = list(dict.fromkeys(norm_name(m["name"]) for m in matches))
-    if len(bases) > 1 and fuzz.token_sort_ratio(norm_name(text), bases[0]) < CLEAR_MATCH:
-        names = list(dict.fromkeys(m["name"] for m in matches))
-        return None, {"fund": text, "code": "ambiguous", "message": f"'{text}' matches several funds; pick one.",
-                      "candidates": names}
+    if (len(bases) > 1 and fuzz.token_sort_ratio(norm_name(text), bases[0]) < CLEAR_MATCH) or is_weak_match(text, matches[0]["name"], CLEAR_MATCH):
+        return None, {"fund": text, "code": "ambiguous", "message": f"'{text}' has no clear match; pick one.",
+                      "candidates": candidate_names(matches)}
     return db.get(Scheme, matches[0]["amfi_code"]), None
 
 

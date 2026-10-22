@@ -3,7 +3,9 @@
 from app.analytics.fund_lens import compare_funds, fund_lens, resolve_funds
 from app.copilot.tools import ToolContext
 from app.data.bulk import copy_nav_points
-from app.models import Investor, Scheme
+from sqlalchemy import delete
+
+from app.models import Investor, Scheme, SchemeHolding
 from tests.synthetic import walk
 
 
@@ -48,3 +50,48 @@ def test_copilot_tool_accepts_a_fund_name(db, market):
     assert ok and out["fund"]["amfi_code"] == market["large_cap"][2]
     out, ok = ToolContext(db, inv).run("fund_lens", {"fund": "No Such Fund Anywhere"})
     assert not ok and "No mutual fund matches" in out["error"]
+
+
+def _add_scheme(db, like_code, code, name):
+    s = db.get(Scheme, like_code)
+    db.add(Scheme(amfi_code=code, name=name, amc_name=s.amc_name, raw_category=s.raw_category, category_key=s.category_key,
+                  plan_type="regular", option_type="growth", riskometer=s.riskometer, in_universe=False))
+    db.commit()
+
+
+def test_single_weak_match_is_ambiguous_but_exact_names_resolve(db, market):
+    from app.portfolio_service import resolve_one
+    code = market["large_cap"][0]
+    _add_scheme(db, code, 990201, "Test US Bluechip Equity Fund - Regular Plan - Growth")
+    s, err = resolve_one(db, "Test Bluechip Fund")
+    assert s is None and err["code"] == "ambiguous" and "Test US Bluechip Equity Fund - Regular Plan - Growth" in err["candidates"]
+    out, ok = ToolContext(db, Investor(display_name="G")).run("fund_lens", {"fund": "Test Bluechip Fund"})
+    assert not ok and "no clear match" in out["error"]
+    name = db.get(Scheme, code).name
+    for q in (name, name.replace(" - Regular Plan - Growth", ""), name.replace(" Fund", ""), str(code)):
+        assert resolve_one(db, q)[0].amfi_code == code
+    assert resolve_one(db, "Test US Bluechip Equity Fund")[0].amfi_code == 990201
+
+
+def _hold(db, code, month, lines):
+    db.add_all(SchemeHolding(amfi_code=code, disclosure_month=month, security_isin=i, security_name=n, sector=sec, asset_class="equity", weight_pct=w)
+               for i, n, sec, w in lines)
+    db.commit()
+
+
+def test_lens_top_holdings_sectors_and_compare_overlap(db, market):
+    from datetime import date
+    a, b, c = market["mid_cap"][:3]
+    m = date(2026, 9, 30)
+    _hold(db, a, m, [("INE000000001", "Alpha", "Banks", 30), ("INE000000002", "Beta", "IT", 20), (None, "TREPS", None, 5), ("INE000000003", "Gamma", "Banks", 10)])
+    _hold(db, b, m, [("INE000000001", "Alpha", "Banks", 10), ("INE000000004", "Delta", "Auto", 40)])
+    h = fund_lens(db, a)["d_profile"]["diversification"]["stock_level"]
+    assert [x["name"] for x in h["top_holdings"]] == ["Alpha", "Beta", "Gamma"]
+    assert h["top_sectors"][0] == {"name": "Banks", "weight_pct": 40.0} and all(s["name"] != "Unclassified" for s in h["top_sectors"])
+    out = compare_funds(db, [a, b])
+    pair = out["holdings_overlap"]["pairs"][0]
+    assert pair["overlap_pct"] == 10.0 and pair["common_securities"] == 1 and out["holdings_overlap"]["disclosure_months"][out["funds"][0]["fund"]] == "2026-09"
+    out = compare_funds(db, [a, b, c])
+    assert "holdings_overlap" not in out and out["holdings_overlap_missing"] == [db.get(Scheme, c).name]
+    db.execute(delete(SchemeHolding).where(SchemeHolding.amfi_code.in_([a, b])))
+    db.commit()

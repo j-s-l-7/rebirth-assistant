@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app import portfolio_service
-from app.analytics.fund_lens import compare_funds, fund_lens, resolve_funds
+from app.analytics.fund_lens import candidate_names, compare_funds, fund_lens, is_weak_match, resolve_funds
 from app.docs.search import search_documents
 from app.models import Escalation, Investor, Scheme
 
@@ -138,6 +138,8 @@ class ToolContext:
         matches = resolve_funds(self.db, text)
         if not matches:
             raise LookupError(f"No mutual fund matches '{fund}'. Try find_funds with a shorter name.")
+        if is_weak_match(text, matches[0]["name"]):
+            raise LookupError(f"'{fund}' has no clear match; ask which was meant. Candidates: {'; '.join(candidate_names(matches))}")
         return matches[0]["amfi_code"], [m for m in matches[1:4] if m["name"] != matches[0]["name"]]
 
     def _t_search_documents(self, a: DocSearchInput) -> dict:

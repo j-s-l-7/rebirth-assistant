@@ -142,6 +142,20 @@ def resolve_funds(db: Session, query: str, limit: int = 6) -> list[dict]:
              "category": get_category(s.category_key).label, "in_peer_set": s.in_universe} for s in rows[:limit]]
 
 
+def is_weak_match(query: str, name: str, clear: int = 85) -> bool:
+    """True when `name` is not a clear match for `query`: a query word is missing from it, or it carries
+    extra distinguishing words (e.g. 'US', 'Equity') the query lacks."""
+    q, n = norm_name(query), norm_name(name)
+    if fuzz.token_sort_ratio(q, n) >= clear:
+        return False
+    qt, nt = set(q.split()) - GENERIC_WORDS, set(n.split()) - GENERIC_WORDS
+    return bool(qt ^ nt)
+
+
+def candidate_names(matches: list[dict], n: int = 5) -> list[str]:
+    return list(dict.fromkeys(m["name"] for m in matches))[:n]
+
+
 def regular_growth_sibling(db: Session, s: Scheme) -> Scheme:
     """The Regular-Growth plan of the same scheme (itself if it already is one)."""
     if s.plan_type == "regular" and s.option_type == "growth":
@@ -192,7 +206,11 @@ def _holdings(db: Session, code: int) -> dict | None:
     for r in rows:
         sectors[r.sector or "Unclassified"] = sectors.get(r.sector or "Unclassified", 0.0) + r.weight_pct
     top_sector = max(sectors.items(), key=lambda kv: kv[1]) if sectors else None
+    top = sorted((r for r in rows if r.security_isin), key=lambda r: r.weight_pct, reverse=True)[:5]
+    top_sectors = sorted(((k, v) for k, v in sectors.items() if k != "Unclassified"), key=lambda kv: kv[1], reverse=True)[:5]
     return {"disclosure_month": month.isoformat(), "holdings": len(rows), "top10_weight_pct": round(sum(weights[:10]), 1),
+            "top_holdings": [{"name": r.security_name, "weight_pct": round(r.weight_pct, 2)} for r in top],
+            "top_sectors": [{"name": k, "weight_pct": round(v, 2)} for k, v in top_sectors],
             "top_sector": {"name": top_sector[0], "weight_pct": round(top_sector[1], 1)} if top_sector else None}
 
 
@@ -282,6 +300,26 @@ def fund_lens(db: Session, amfi_code: int, nb: NavBook | None = None) -> dict:
     }
 
 
+def _overlap(db: Session, rows: list[dict]) -> dict:
+    """Pairwise holdings overlap from each fund's latest disclosure; names the funds lacking one instead."""
+    from app.analytics import xray
+    from app.portfolio_service import latest_holdings
+    held, months, missing = {}, {}, []
+    for r in rows:
+        h, month = latest_holdings(db, regular_growth_sibling(db, db.get(Scheme, r["amfi_code"])).amfi_code)
+        if h:
+            held[r["fund"]], months[r["fund"]] = h, month
+        else:
+            missing.append(r["fund"])
+    if len(rows) < 2:
+        return {}
+    if missing:
+        return {"holdings_overlap_missing": missing}
+    pairs = [{"fund_a": p["fund_a"], "fund_b": p["fund_b"], "overlap_pct": round(p["overlap_pct"], 1),
+              "common_securities": p["common_securities"]} for p in xray.pairwise_overlap(held)]
+    return {"holdings_overlap": {"disclosure_months": months, "pairs": pairs}}
+
+
 def compare_funds(db: Session, amfi_codes: list[int]) -> dict:
     nb = NavBook(db)
     lenses = [fund_lens(db, c, nb) for c in amfi_codes[:4]]
@@ -295,6 +333,7 @@ def compare_funds(db: Session, amfi_codes: list[int]) -> dict:
                                      "standing": by_key[k].get("standing")} for k in keys},
                      "aum_cr": lens["fund"]["aum_cr"], "expense_ratio": lens["d_profile"]["cost"]["expense_ratio"]})
     categories = {r["category"] for r in rows}
-    return {"as_of": max(lens["as_of"] for lens in lenses) if lenses else None, "same_category": len(categories) == 1,
+    overlap = _overlap(db, rows)
+    return {**overlap, "as_of": max(lens["as_of"] for lens in lenses) if lenses else None, "same_category": len(categories) == 1,
             "funds": rows, "metric_labels": {k: lbl for k, lbl, _ in METRICS if k in keys},
             "note": "Each fund is ranked within its own category; ranks across different categories aren't comparable."}
