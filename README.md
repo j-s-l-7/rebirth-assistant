@@ -114,7 +114,7 @@ Rules it follows: facts and comparisons only, no buy/sell/switch wording (a bann
 | ~35 ICICI ETFs and other ETFs | No Regular-Growth plan to attach holdings to | Link by ETF code if ETFs enter the universe |
 | Index funds (~260) | Holdings equal the index constituents | Load NSE/BSE constituent files after checking their terms |
 | Month mix | Aug 2026 for mirror AMCs, Sep for the rest | Re-run the loaders on September files; each fund shows its own month |
-| Supabase | Holdings are in the local SQLite only | `push-holdings` (below), after you review and merge the PR |
+| Supabase | **Done 2026-10-22:** 31,410 rows, 526 fund portfolios (Aug and Sep 2026) loaded with `push-holdings --apply`; the 6 new columns were added to `mf.scheme_portfolio` (additive). Re-run after each monthly load; it replaces each fund-month, so it is safe | Keep it current: monthly load, then `push-holdings --apply` |
 
 Sources and per-AMC notes: `backend/app/data/portfolio_sources.py`.
 
@@ -207,7 +207,7 @@ cd backend && uv run python ../evals/run_evals.py    # real LLM calls: costs mon
 
 | Next | Why |
 |---|---|
-| Holdings for the leftovers above, a monthly refresh job (SEBI requires disclosure within 10 days of month-end), `push-holdings --apply` to Supabase | Wider X-ray coverage; production has none yet |
+| Holdings for the leftovers above and a monthly refresh job (SEBI requires disclosure within 10 days of month-end), then `push-holdings --apply` | Wider X-ray coverage |
 | AUM and official riskometer | Fills the blocked performance feed |
 | CAS upload (casparser) | Funds and units without typing |
 | Load official documents once legal clears AMFI's terms | `search_documents` answers on rules with citations |
