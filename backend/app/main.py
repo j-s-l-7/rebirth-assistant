@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api import admin, chat, health, investors
+from app.api import admin, chat, health, investors, portfolio
 from app.config import get_settings
 from app.db import init_db
 from app.telemetry import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
@@ -28,5 +28,5 @@ app.add_middleware(
 )
 # Outermost, so every response (CORS preflights and errors included) carries an X-Request-ID.
 app.add_middleware(RequestIdMiddleware)
-for r in (health.router, investors.router, chat.router, admin.router):
+for r in (health.router, investors.router, chat.router, admin.router, portfolio.router):
     app.include_router(r, prefix="/api")
