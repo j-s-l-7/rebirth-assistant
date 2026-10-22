@@ -128,7 +128,7 @@ def objective_checks(exposures, objective):
     """Compare exposure() output with the investor's own limits; limits are only compared, never judged.
 
     Each max_* limit reports the largest item in its group (Unclassified and ISIN-less lines excluded) as
-    within | exceeds. Each `avoid` name found (case-insensitive) in securities, sectors or industries is present."""
+    within | exceeds. Each `avoid` name found (case-insensitive, whole leading words: "ITC" matches "ITC Limited") in securities, sectors or industries is present."""
     objective = {k: v for k, v in (objective or {}).items() if v not in (None, [], "")}
     if not objective:
         return [{"check": "no_limits_set", "status": "info"}]
@@ -145,7 +145,8 @@ def objective_checks(exposures, objective):
                        "actual_pct": top["pct"], "limit_pct": limit, "contributors": top.get("funds", [])})
     for name in objective.get("avoid", []):
         for group in ("securities", "sectors", "industries"):
-            hit = next((e for e in exposures.get(group, []) if e["name"].lower() == name.lower()), None)
+            want = name.strip().lower()
+            hit = next((e for e in exposures.get(group, []) if e["name"].lower() == want or e["name"].lower().startswith(want + " ")), None)
             if hit:
                 checks.append({"check": "avoid", "status": "present", "item": hit["name"],
                                "actual_pct": hit["pct"], "contributors": hit.get("funds", [])})

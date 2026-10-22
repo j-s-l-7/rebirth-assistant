@@ -307,3 +307,9 @@ def test_low_overlap_screen_order_and_effect():
     no_amount = low_overlap_screen(holdings, {"A": 60_000, "B": 40_000}, cands)
     assert [c["name"] for c in no_amount["candidates"]] == ["C2", "C1", "C3"]
     assert "effect" not in no_amount["candidates"][0] and no_amount["amount_inr"] is None
+
+
+def test_objective_avoid_matches_leading_whole_words_only():
+    _, ex = _two_fund_exposure()
+    assert [c["item"] for c in objective_checks(ex, {"avoid": ["W"]})] == ["W Oil"]
+    assert objective_checks(ex, {"avoid": ["Ban", "Oi"]}) == []
