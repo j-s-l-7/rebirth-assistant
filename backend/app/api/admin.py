@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_admin
 from app.config import get_settings
 from app.db import SessionLocal, get_db, is_postgres
-from app.models import NavPoint, Scheme, SchemeMetric
+from app.freshness import data_freshness
+from app.models import NavPoint, Scheme
 
 router = APIRouter(tags=["admin"])
 _jobs: dict[str, dict] = {}
@@ -34,13 +35,15 @@ def _background(name: str, fn) -> dict:
 
 @router.get("/meta/data-status")
 def data_status(db: Session = Depends(get_db)):
+    freshness = data_freshness(db)
     return {
         "database": "postgres" if is_postgres() else "sqlite",
         "schemes": db.scalar(select(func.count()).select_from(Scheme)),
         "investable_schemes": db.scalar(select(func.count()).select_from(Scheme).where(Scheme.in_universe.is_(True))),
         "nav_points": db.scalar(select(func.count()).select_from(NavPoint)),
-        "latest_nav_date": (d.isoformat() if (d := db.scalar(select(func.max(NavPoint.nav_date)))) else None),
-        "metrics_as_of": (d.isoformat() if (d := db.scalar(select(func.max(SchemeMetric.as_of)))) else None),
+        "latest_nav_date": freshness["latest_nav_date"],
+        "metrics_as_of": freshness["metrics_as_of"],
+        "freshness": freshness,
         "copilot_provider": get_settings().copilot_provider,
         "copilot_configured": bool(os.environ.get("OPENAI_API_KEY") if get_settings().copilot_provider == "openai"
                                    else os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")),

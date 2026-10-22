@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     # /admin/* endpoints require this value in the X-Admin-Token header; unset, they are disabled.
     admin_token: str | None = None
 
+    # --- Data freshness and telemetry (app/freshness.py, app/telemetry.py) ------------------------
+    # Fund data is stale when the latest NAV date or ranking run is more than this many business
+    # days (Mon-Fri) behind today in IST. A lag of 1 is normal during the day.
+    freshness_max_lag_business_days: int = 2
+    # Logs: "json" (one object per line, for the host's log search) or "text".
+    log_format: str = "json"
+    log_level: str = "INFO"
+
 
 @lru_cache
 def get_settings() -> Settings:
