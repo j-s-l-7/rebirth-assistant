@@ -12,6 +12,7 @@
     python -m app.cli search-docs "QUERY"     # full-text search over stored documents
     python -m app.cli daily                   # all daily feeds, gap repair, universe refinement, rankings
     python -m app.cli load-disclosures FILE.csv
+    python -m app.cli load-portfolios PATH_OR_URL [...]   # AMC monthly portfolio workbooks (.xls/.xlsx/.zip)
     python -m app.cli stats
     python -m app.cli print-ddl > sql/schema.sql   # Postgres DDL for review (tables live in DB_SCHEMA)
 """
@@ -74,6 +75,35 @@ def run_daily(db: Session) -> dict:
     return out
 
 
+def load_portfolio_sources(db: Session, sources: list[str]) -> dict:
+    """Load each file or URL in turn (URLs fetched one at a time, a few seconds apart); print a summary per file."""
+    from pathlib import Path
+
+    from app.data.portfolios import load_portfolios
+    from app.data.ter import _NameMatcher
+    from app.http import http_client, with_retries
+
+    matcher = _NameMatcher(db, 95.0)
+    files = []
+    with http_client() as client:
+        for i, src in enumerate(sources):
+            if src.startswith(("http://", "https://")):
+                if i:
+                    time.sleep(3)
+                try:
+                    content = with_retries(f"portfolio {src}", lambda src=src: client.get(src).raise_for_status().content, attempts=2)
+                except RuntimeError as exc:
+                    files.append({"file": src, "error": str(exc)})
+                    continue
+            else:
+                content = Path(src).read_bytes()
+            res = load_portfolios(db, content, src, matcher)
+            print(f"{src}: {res['schemes_parsed']} schemes parsed, {res['linked']} linked, {res['quarantined']} quarantined, "
+                  f"{res['unlinked']} unlinked, {res['rows']} rows", flush=True)
+            files.append(res)
+    return {"files": files}
+
+
 def print_ddl() -> None:
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.schema import CreateIndex, CreateTable
@@ -118,6 +148,8 @@ def main() -> None:
     sub.add_parser("daily")
     d = sub.add_parser("load-disclosures")
     d.add_argument("path")
+    lp = sub.add_parser("load-portfolios")
+    lp.add_argument("sources", nargs="+", metavar="PATH_OR_URL")
     sub.add_parser("stats")
     sub.add_parser("print-ddl")
     args = p.parse_args()
@@ -182,6 +214,8 @@ def main() -> None:
             from app.data.disclosures import load_disclosure_csv
 
             out = {"rows": load_disclosure_csv(db, Path(args.path))}
+        elif args.cmd == "load-portfolios":
+            out = load_portfolio_sources(db, args.sources)
         else:
             from app.models import Investor, NavPoint, Scheme
 
