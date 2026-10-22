@@ -4,7 +4,7 @@ Layouts differ by AMC, so the parser looks for structure instead of fixed cells:
 - A table starts at a header row holding an instrument-name, an ISIN and a % to net assets / NAV column
   (quantity, market value and industry / rating columns are picked up when present). A sheet may hold one
   scheme (often next to an index sheet, which has no such header and is skipped) or several stacked ones.
-- The scheme's name is the first fund-like text above its header; the disclosure date is the first date
+- The scheme's name is the closest fund-like text above its header; the disclosure date is the first date
   there, else at the top of the sheet, else in the file name.
 - Heading rows ("Equity & Equity related", "Money Market Instruments", ...) set the asset class of the rows
   under them; TREPS / repo / net current assets / cash margin rows are cash whatever their heading, rows
@@ -320,7 +320,7 @@ def _header_columns(row: list) -> dict[str, int] | None:
 
 
 def _find_name(rows: list[list]) -> str | None:
-    for row in rows:
+    for row in reversed(rows):  # the closest to the table: notes of the previous scheme come first
         for v in row:
             t = str(v).strip() if isinstance(v, str) else ""
             if t and _FUNDLIKE.search(t) and not _NOT_NAME.search(t) and 2 <= len((name := scheme_name(t)).split()) and len(name) <= _MAX_NAME:
