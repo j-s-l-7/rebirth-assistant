@@ -11,7 +11,7 @@ PORTFOLIO_SOURCES: dict[str, dict[str, str]] = {
     },
     "ICICI Prudential": {
         "page_url": "https://www.icicipruamc.com/media-center/downloads",
-        "how_to_fetch": "Manual: robots allow, but the page is a JS app with no public file list found; download by hand.",
+        "how_to_fetch": "Direct zip, one workbook per scheme: https://www.icicipruamc.com/blob/downloads/Files/Monthly%20Portfolio%20Disclosures/YYYY/Mon/Monthly-Portfolio-Disclosure-MonthName-YYYY.zip (e.g. 2026/Sep/...-September-2026.zip); load with load-portfolios.",
     },
     "SBI": {
         "page_url": "https://www.sbimf.com/portfolios",

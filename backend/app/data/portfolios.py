@@ -328,16 +328,29 @@ def _find_name(rows: list[list]) -> str | None:
     return None
 
 
-def _is_group_total(below: list[list], weight_col: int, weight: float) -> bool:
-    """True when the unbroken run of rows under a row has weights that add up to the row's own weight."""
-    run = 0.0
-    for r in below:
-        w = _number(r[weight_col]) if weight_col < len(r) else None
-        if w is None:
-            return False
-        run += w
-        if abs(run - weight) <= 1e-4 * abs(weight) + 1e-9:
-            return True
+def _is_group_total(below: list[list], weight_col: int, weight: float, name_col: int, isin_col: int | None) -> bool:
+    """True when the unbroken run of rows under a row has weights that add up to the row's own weight.
+
+    Tried twice: counting every row, then ignoring nested non-cash headings ("Money Market" > "Treasury Bills" > bills)."""
+    for skip_nested in (False, True):
+        run = 0.0
+        for r in below:
+            if not any(v not in (None, "") for v in r):
+                continue  # blank spacer row
+            if any(isinstance(v, str) and (_SUBTOTAL.match(v.strip().lower()) or _GRAND_TOTAL.match(v.strip().lower())) for v in r):
+                break  # a "Total" row under a lone holding repeats its weight; that is not a group heading
+            w = _number(r[weight_col]) if weight_col < len(r) else None
+            if w is None:
+                if weight_col < len(r) and _text(r[weight_col]).lower() in ("^", "nil"):  # "^" = under 0.005%, "Nil" = none; both count as zero
+                    continue
+                break
+            label = _text(r[name_col]).lower() if name_col < len(r) else ""
+            has_isin = isin_col is not None and isin_col < len(r) and _text(r[isin_col]) != ""
+            if skip_nested and not has_isin and not _CASH_ROW.search(label):
+                continue
+            run += w
+            if abs(run - weight) <= 2e-3 * abs(weight) + 1e-9:
+                return True
     return False
 
 
@@ -364,7 +377,7 @@ def _parse_table(rows: list[list], cols: dict[str, int], scheme: ParsedScheme) -
         raw_isin = _text(cell(row, "isin")).upper()
         # a group heading that carries its own total (ICICI: "Equity & Equity Related ... 97.9%") is a heading, not a holding
         group_total = weight is not None and not raw_isin and _number(cell(row, "quantity")) is None and (
-            not _CASH_ROW.search(low) or _is_group_total(rows[n + 1 :], cols["weight"], weight))  # "Reverse Repo" over its repos
+            _is_group_total(rows[n + 1 :], cols["weight"], weight, cols.get("name", 0), cols.get("isin")))
         if weight is None or group_total:
             if raw_isin:
                 scheme.issues.append(f"no numeric weight for {label} ({raw_isin}): {cell(row, 'weight')!r}")
