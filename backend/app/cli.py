@@ -13,6 +13,7 @@
     python -m app.cli daily                   # all daily feeds, gap repair, universe refinement, rankings
     python -m app.cli load-disclosures FILE.csv
     python -m app.cli load-portfolios PATH_OR_URL [...]   # AMC monthly portfolio workbooks (.xls/.xlsx/.zip)
+    python -m app.cli push-holdings [--apply]   # local holdings -> Supabase (needs SUPABASE_DATABASE_URL; dry run unless --apply)
     python -m app.cli stats
     python -m app.cli print-ddl > sql/schema.sql   # Postgres DDL for review (tables live in DB_SCHEMA)
 """
@@ -150,6 +151,8 @@ def main() -> None:
     d.add_argument("path")
     lp = sub.add_parser("load-portfolios")
     lp.add_argument("sources", nargs="+", metavar="PATH_OR_URL")
+    ph = sub.add_parser("push-holdings")
+    ph.add_argument("--apply", action="store_true")
     sub.add_parser("stats")
     sub.add_parser("print-ddl")
     args = p.parse_args()
@@ -216,6 +219,10 @@ def main() -> None:
             out = {"rows": load_disclosure_csv(db, Path(args.path))}
         elif args.cmd == "load-portfolios":
             out = load_portfolio_sources(db, args.sources)
+        elif args.cmd == "push-holdings":
+            from app.data.push_holdings import push_holdings, target_engine
+
+            out = push_holdings(db, target_engine(), apply=args.apply)
         else:
             from app.models import Investor, NavPoint, Scheme
 

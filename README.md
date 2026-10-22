@@ -85,7 +85,38 @@ Page `/xray` (and the `portfolio_xray` chat tool): enter funds with amounts, opt
 
 Rules it follows: facts and comparisons only, no buy/sell/switch wording (a banned-word test covers every generated string); every number states the fund's disclosure month; the lowest-overlap list is labelled "one criterion, not a recommendation" and never picks one fund; funds without a loaded disclosure are reported as such, never estimated; a human expert (EUIN holder) is offered.
 
-Coverage today (local DB): holdings for 467 of 1,640 investable funds across 12 of 53 AMCs. Sources and gaps per AMC are in `backend/app/data/portfolio_sources.py`.
+### Holdings coverage (467 of 1,640 investable funds, 12 of 53 AMCs; local DB)
+
+| AMC | Funds | Month | Source |
+|---|---|---|---|
+| ICICI Prudential | 113 | Sep 2026 | AMC file, plain download (sha256 matches the manifest in the mirror repo) |
+| SBI | 86 | Aug 2026 | Mirror copy, not independently verifiable (robots.txt disallows automated download) |
+| Nippon India | 75 | Sep 2026 | AMC file |
+| DSP | 65 | Sep 2026 | AMC file |
+| Mirae Asset | 59 | Aug 2026 | Mirror copy, not independently verifiable |
+| Baroda BNP Paribas | 43 | Aug 2026 | Mirror copy |
+| Franklin Templeton | 33 | Aug 2026 | Mirror copy (5 quarantined) |
+| PGIM India | 23 | Aug 2026 | Mirror copy (one fund removed: file carried a 2022 date) |
+| JM Financial | 17 | Aug 2026 | Mirror copy |
+| PPFAS | 7 | Sep 2026 | AMC file |
+| Abakkus | 4 | Aug 2026 | Mirror copy |
+| UTI | 1 | Sep 2026 | One fund only (ULIP) |
+
+"Mirror" = github.com/subscriptionmanager26-png/fund-disclosures (MIT; AMC-direct files, every file's sha256 checked against its manifest; two re-downloaded from the AMC and matched byte for byte). Weights sum to 90-110% for all but 3 DSP funds (arbitrage and hedged funds net short futures). Fund-level checks: ISIN length, weights, quarantine of bad rows.
+
+**Leftovers (not loaded)**
+
+| What | Why | Next step |
+|---|---|---|
+| HDFC (83 funds) | Site blocks automated requests (Akamai); we do not work around it | Download the monthly file by hand, then `load-portfolios` |
+| Kotak (93), Aditya Birla SL (84), Axis (73), Bandhan (68), Tata (58), others | No automated path found; not in any repo we checked | Download by hand (page URLs in `portfolio_sources.py`) or ask the AMC's distributor desk |
+| UTI (69), Union, Navi | UTI: mirror file holds exposure sheets, not holdings; Union: loader links 0 of 32 files; Navi: mirror hashes do not match its manifest | Find UTI's scheme file; add a layout rule for Union; re-fetch Navi from the AMC |
+| ~35 ICICI ETFs and other ETFs | No Regular-Growth plan to attach holdings to | Link by ETF code if ETFs enter the universe |
+| Index funds (~260) | Holdings equal the index constituents | Load NSE/BSE constituent files after checking their terms |
+| Month mix | Aug 2026 for mirror AMCs, Sep for the rest | Re-run the loaders on September files; each fund shows its own month |
+| Supabase | Holdings are in the local SQLite only | `push-holdings` (below), after you review and merge the PR |
+
+Sources and per-AMC notes: `backend/app/data/portfolio_sources.py`.
 
 ## Architecture
 
@@ -150,6 +181,7 @@ Without an API key the chat says it isn't connected.
 | `daily` | All daily feeds, gap repair, universe refinement, rankings |
 | `sync-documents` / `search-docs "QUERY"` | Official documents (held for legal) / full-text search |
 | `load-disclosures FILE.csv` | AMC portfolio disclosures → stock-level holdings |
+| `push-holdings [--apply]` | Local holdings → Supabase. Dry run unless `--apply`; adds the missing columns (never drops), replaces each fund-month portfolio in one transaction, so re-runs are safe. Needs `SUPABASE_DATABASE_URL` (session pooler URI) in `backend/.env.supabase` (git-ignored). Source links become the AMC's public page, never a local path |
 | `load-portfolios PATH_OR_URL [...]` | AMC monthly portfolio workbooks (.xls/.xlsx/.zip, any layout) → holdings under each scheme's Regular-Growth code; reports quarantined and unmatched schemes |
 | `stats` / `print-ddl` | Data counts / Postgres DDL |
 
@@ -175,7 +207,7 @@ cd backend && uv run python ../evals/run_evals.py    # real LLM calls: costs mon
 
 | Next | Why |
 |---|---|
-| Holdings for the remaining AMCs (HDFC, Kotak, ABSL, Axis, UTI, Bandhan, Tata), a monthly refresh job, load into Supabase | Wider X-ray coverage; production has none yet |
+| Holdings for the leftovers above, a monthly refresh job (SEBI requires disclosure within 10 days of month-end), `push-holdings --apply` to Supabase | Wider X-ray coverage; production has none yet |
 | AUM and official riskometer | Fills the blocked performance feed |
 | CAS upload (casparser) | Funds and units without typing |
 | Load official documents once legal clears AMFI's terms | `search_documents` answers on rules with citations |
