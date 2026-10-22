@@ -1,10 +1,11 @@
-"""X-ray maths: hand-computed exposure and overlap cases."""
+"""X-ray maths: hand-computed exposure, overlap, concentration and coverage cases."""
 
 from dataclasses import dataclass
+from datetime import date
 
 from pytest import approx
 
-from app.analytics.xray import exposure, pairwise_overlap
+from app.analytics.xray import concentration, coverage, exposure, pairwise_overlap
 
 
 @dataclass
@@ -14,7 +15,7 @@ class Row:
     sector: str | None
     industry: str | None
     asset_class: str
-    weight_pct: float
+    weight_pct: float | None
 
 
 def _by_name(items):
@@ -103,9 +104,64 @@ def test_short_derivative_nets_in_exposure_and_is_ignored_in_overlap():
 def test_empty_input():
     assert exposure({}, {}) == {"securities": [], "sectors": [], "industries": [], "asset_classes": []}
     assert pairwise_overlap({}) == []
+    assert concentration(exposure({}, {}), []) == {
+        "top10_pct": 0, "effective_stocks": 0, "hhi": 0, "top_sector_pct": 0, "redundancy_pct": 0
+    }
+    assert coverage({}, {}, {}, date(2026, 10, 22)) == {
+        "covered_value_pct": 0, "funds_without_disclosure": [], "stale_disclosures": []
+    }
 
 
 def test_zero_total_gives_zero_pct():
     holdings = {"A": [Row("INE1", "X Bank", "Financials", "Banks", "equity", 100)]}
     ex = exposure(holdings, {"A": 0})
-    assert ex["securities"] == [{"name": "X Bank", "value_inr": 0.0, "funds": ["A"], "pct": 0.0}]
+    assert ex["securities"] == [{"name": "X Bank", "value_inr": 0.0, "funds": ["A"], "isin": "INE1", "pct": 0.0}]
+
+
+def test_none_weight_row_is_skipped():
+    holdings = {
+        "A": [Row("INE1", "X Bank", "Financials", "Banks", "equity", 100),
+              Row("INE9", "N Co", "IT", "Software", "equity", None)],
+        "B": [Row("INE1", "X Bank", "Financials", "Banks", "equity", 50),
+              Row("INE9", "N Co", "IT", "Software", "equity", None)],
+    }
+    ex = exposure(holdings, {"A": 100, "B": 100})
+    assert [e["name"] for e in ex["securities"]] == ["X Bank"]
+    assert pairwise_overlap(holdings)[0]["common_securities"] == 1
+
+
+def test_concentration_four_equal_securities():
+    # One fund: four stocks at 22.5% each plus 10% cash. Cash (no ISIN) is not a security.
+    holdings = {"A": [
+        Row("INE1", "S1", "Financials", "Banks", "equity", 22.5),
+        Row("INE2", "S2", "Financials", "Banks", "equity", 22.5),
+        Row("INE3", "S3", "IT", "Software", "equity", 22.5),
+        Row("INE4", "S4", "Energy", "Oil", "equity", 22.5),
+        Row(None, "Cash", None, None, "cash", 10),
+    ]}
+    overlap = [{"overlap_pct": 40}, {"overlap_pct": 20}]
+    # shares 0.25 each -> hhi 4 * 0.0625 = 0.25, effective 4; top10 = 90; Financials 45; mean overlap 30.
+    assert concentration(exposure(holdings, {"A": 1000}), overlap) == {
+        "top10_pct": approx(90), "effective_stocks": approx(4), "hhi": approx(0.25),
+        "top_sector_pct": approx(45), "redundancy_pct": approx(30),
+    }
+
+
+def test_concentration_unequal_and_top10_cap():
+    secs = [{"name": f"S{i}", "isin": f"INE{i}", "pct": p} for i, p in enumerate([50, 30, 20])]
+    c = concentration({"securities": secs, "sectors": []}, [])
+    assert c["hhi"] == approx(0.38) and c["effective_stocks"] == approx(1 / 0.38)  # .25 + .09 + .04
+    secs = [{"name": f"S{i}", "isin": f"INE{i}", "pct": 8} for i in range(12)]
+    assert concentration({"securities": secs, "sectors": []}, [])["top10_pct"] == approx(80)
+
+
+def test_coverage_missing_and_stale():
+    # Today Oct 2026: Aug is fresh (2 months back), Jul is stale. C has no holdings.
+    rows = [Row("INE1", "X Bank", "Financials", "Banks", "equity", 100)]
+    holdings = {"A": rows, "B": rows}
+    months = {"A": "2026-08", "B": "2026-07"}
+    assert coverage({"A": 50_000, "B": 30_000, "C": 20_000}, holdings, months, date(2026, 10, 22)) == {
+        "covered_value_pct": approx(80),
+        "funds_without_disclosure": ["C"],
+        "stale_disclosures": [{"fund": "B", "disclosure_month": "2026-07"}],
+    }
