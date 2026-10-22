@@ -48,8 +48,7 @@ def client():
 def _strings(obj, key=None):
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if k != "tier":  # ranking-model label, shown as information only
-                yield from _strings(v, k)
+            yield from _strings(v, k)
     elif isinstance(obj, list):
         for v in obj:
             yield from _strings(v, key)

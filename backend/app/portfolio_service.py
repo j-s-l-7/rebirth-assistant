@@ -17,6 +17,10 @@ from app.reference.categories import CATEGORIES, get_category
 CLEAR_MATCH = 85  # token_sort_ratio at or above which the top name match is taken without asking
 
 
+# Neutral display labels: the ranking model's own tier names read as instructions in a fund list.
+TIER_BAND = {"core": "top band", "satellite": "upper-middle band", "watch": "lower-middle band", "exit": "bottom band"}
+
+
 def resolve_one(db: Session, fund: str) -> tuple[Scheme | None, dict | None]:
     """Fund name or AMFI code -> (scheme, None), or (None, error) with code not_found | ambiguous."""
     text = str(fund).strip()
@@ -168,5 +172,5 @@ def screen(db: Session, items: list[dict], category: str | None = None, amount_i
         score = m.get("composite_score")
         c.update({"amfi_code": code, "expense_ratio_regular_pct": ters.get(code), "disclosure_month": months[c["name"]],
                   "rank": {"position": scores.index(score) + 1 if score is not None else None, "of": len(peers),
-                           "tier": m.get("tier"), "rank_basis": f"{MODEL_VERSION} composite within {cat.label}"}})
+                           "tier": TIER_BAND.get(m.get("tier")), "rank_basis": f"{MODEL_VERSION} composite within {cat.label}"}})
     return {"category": cat.label, **out, "missing_details": p["missing_details"], "errors": p["errors"]}
