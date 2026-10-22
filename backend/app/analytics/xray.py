@@ -15,6 +15,8 @@ BANNED_WORDS = ("buy", "sell", "switch", "should", "recommend", "advise", "advic
 LIMITS = {"max_security_pct": "securities", "max_sector_pct": "sectors", "max_industry_pct": "industries",
           "max_amc_pct": "amcs"}
 EXPERT_NOTE = "A human expert (EUIN holder) can go through this with you at no cost."
+SCREEN_CRITERION = "lowest overlap with your current look-through holdings"
+SCREEN_NOTE = "Screen on one criterion (overlap), not a recommendation. It ignores returns, risk, cost and your goals."
 
 
 def _get(row, key):
@@ -59,19 +61,22 @@ def exposure(holdings, fund_values):
     return out
 
 
+def _longs(rows):
+    """ISIN -> summed positive weight; ISIN-less lines (cash, TREPS) are not securities here."""
+    w = defaultdict(float)
+    for row in rows:
+        isin, weight = _get(row, "security_isin"), _get(row, "weight_pct")
+        if isin and (weight or 0) > 0:
+            w[isin] += weight
+    return w
+
+
 def pairwise_overlap(holdings):
     """O(a,b) = sum_s min(w_a(s), w_b(s)) over securities both funds hold long, keyed by ISIN.
 
     Only positive weights count; lines without an ISIN (cash, TREPS) are not securities here.
     common_securities is the count of shared ISINs. Sorted by overlap_pct, largest first."""
-    longs = {}
-    for fund, rows in holdings.items():
-        w = defaultdict(float)
-        for row in rows:
-            isin, weight = _get(row, "security_isin"), _get(row, "weight_pct")
-            if isin and (weight or 0) > 0:
-                w[isin] += weight
-        longs[fund] = w
+    longs = {fund: _longs(rows) for fund, rows in holdings.items()}
     pairs = []
     for a, b in combinations(longs, 2):
         shared = longs[a].keys() & longs[b].keys()
@@ -148,16 +153,18 @@ def objective_checks(exposures, objective):
     return checks
 
 
-def observations(exposures, overlap, concentration, coverage, overlap_threshold_pct=50):
+def observations(overlap, coverage, disclosure_months, overlap_threshold_pct=50):
     """Neutral, factual notes: high_overlap (pairs at or above the threshold), low_coverage, stale_disclosure.
-    Text states numbers and the disclosure basis and never suggests an action."""
+    Text states numbers and the disclosure month of each fund ("YYYY-MM") and never suggests an action."""
+    def basis(fund):
+        return f"{fund} (holdings as of {disclosure_months.get(fund) or 'an unknown month'})"
+
     out = []
     for p in overlap:
         if p["overlap_pct"] >= overlap_threshold_pct:
             out.append({"code": "high_overlap", "funds": [p["fund_a"], p["fund_b"]], "text": (
-                f"{p['fund_a']} and {p['fund_b']} share {p['overlap_pct']:.1f}% of their portfolios by weight "
-                f"({p['common_securities']} common securities), based on each fund's latest holdings disclosure. "
-                + EXPERT_NOTE)})
+                f"{basis(p['fund_a'])} and {basis(p['fund_b'])} share {p['overlap_pct']:.1f}% of their portfolios "
+                f"by weight ({p['common_securities']} common securities). " + EXPERT_NOTE)})
     if coverage["covered_value_pct"] < 100:
         missing = coverage["funds_without_disclosure"]
         out.append({"code": "low_coverage", "funds": missing, "text": (
@@ -169,3 +176,76 @@ def observations(exposures, overlap, concentration, coverage, overlap_threshold_
             "Holdings for " + ", ".join(f"{s['fund']} ({s['disclosure_month']})" for s in stale)
             + " come from disclosures more than two months old; their figures reflect those months.")})
     return out
+
+
+def _snapshot(holdings, fund_values):
+    """exposure, overlap and concentration over funds with a positive value."""
+    live = {f: v for f, v in fund_values.items() if v > 0}
+    held = {f: rows for f, rows in holdings.items() if f in live}
+    ex, ov = exposure(held, live), pairwise_overlap(held)
+    return {"exposures": ex, "overlap": ov, "concentration": concentration(ex, ov)}
+
+
+def simulate_changes(holdings, fund_values, changes):
+    """Apply the investor's own what-if moves [{from_fund, to_fund, amount_inr}] in order; never picks one.
+
+    to_fund needs holdings in `holdings` (it may be new to the portfolio). A move that is not positive, names
+    the same fund twice, or takes from_fund below 0 is not applied and says why. deltas lists, per group,
+    the 10 largest absolute pct changes (unchanged items left out)."""
+    values, applied = dict(fund_values), []
+    for c in changes:
+        src, dst, amount = c.get("from_fund"), c.get("to_fund"), c.get("amount_inr") or 0
+        held = values.get(src, 0)
+        if amount <= 0:
+            reason = "amount_inr must be above 0"
+        elif src == dst:
+            reason = "from_fund and to_fund are the same fund"
+        elif src not in values:
+            reason = f"{src} is not in the portfolio"
+        elif not holdings.get(dst):
+            reason = f"no holdings disclosure for {dst}"
+        elif amount > held:
+            reason = f"amount_inr {amount:,.0f} is above the {held:,.0f} held in {src}"
+        else:
+            values[src] = held - amount
+            values[dst] = values.get(dst, 0) + amount
+            reason = None
+        applied.append({**c, "applied": reason is None, "reason": reason})
+    before, after = _snapshot(holdings, fund_values), _snapshot(holdings, values)
+    deltas = {}
+    for group in ("securities", "sectors", "industries"):
+        b, a = ({e.get("isin") or e["name"]: e for e in snap["exposures"][group]} for snap in (before, after))
+        rows = []
+        for key in b.keys() | a.keys():
+            bp, ap = b.get(key, {}).get("pct", 0.0), a.get(key, {}).get("pct", 0.0)
+            if abs(ap - bp) > 1e-9:
+                rows.append({"name": (a.get(key) or b[key])["name"], "before_pct": bp, "after_pct": ap,
+                             "delta_pct": ap - bp})
+        deltas[group] = sorted(rows, key=lambda r: (-abs(r["delta_pct"]), r["name"]))[:10]
+    return {"before": before, "after": after, "deltas": deltas, "changes_applied": applied}
+
+
+def low_overlap_screen(holdings, fund_values, candidate_holdings, amount_inr=None, limit=10):
+    """Rank candidate funds (name -> rows) by overlap with the current portfolio, lowest first; a screen on
+    one criterion, never a single pick.
+
+    overlap_pct = sum_s min(w_c(s), p(s)), p(s) = the portfolio's long look-through pct per ISIN. With
+    amount_inr, effect gives top_security_pct_after and effective_stocks_after had that amount gone into
+    the candidate. Candidates without holdings rows are left out."""
+    p = {e["isin"]: e["pct"] for e in exposure(holdings, fund_values)["securities"] if e.get("isin") and e["pct"] > 0}
+    out = []
+    for name, rows in candidate_holdings.items():
+        if not rows:
+            continue
+        w = _longs(rows)
+        item = {"name": name, "overlap_pct": sum(min(w[s], p[s]) for s in w.keys() & p.keys())}
+        if amount_inr:
+            values = {**fund_values, name: fund_values.get(name, 0) + amount_inr}
+            ex = exposure({**holdings, name: rows}, values)
+            item["effect"] = {
+                "top_security_pct_after": max((e["pct"] for e in ex["securities"] if e.get("isin")), default=0.0),
+                "effective_stocks_after": concentration(ex, [])["effective_stocks"],
+            }
+        out.append(item)
+    out.sort(key=lambda c: (c["overlap_pct"], c["name"]))
+    return {"criterion": SCREEN_CRITERION, "amount_inr": amount_inr, "candidates": out[:limit], "note": SCREEN_NOTE}

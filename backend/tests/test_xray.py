@@ -7,7 +7,8 @@ import pytest
 from pytest import approx
 
 from app.analytics.xray import (
-    BANNED_WORDS, concentration, coverage, exposure, objective_checks, observations, pairwise_overlap,
+    BANNED_WORDS, SCREEN_NOTE, concentration, coverage, exposure, low_overlap_screen, objective_checks, observations,
+    pairwise_overlap, simulate_changes,
 )
 
 
@@ -219,28 +220,90 @@ def test_objective_empty(objective):
 def test_observations_threshold_and_numbers():
     holdings, ex = _two_fund_exposure()
     ov = pairwise_overlap(holdings)  # A/B overlap 40
-    cov = coverage({"A": 60_000, "B": 40_000}, holdings, {"A": "2026-09", "B": "2026-09"}, date(2026, 10, 1))
-    assert observations(ex, ov, concentration(ex, ov), cov) == []
-    [obs] = observations(ex, ov, concentration(ex, ov), cov, overlap_threshold_pct=40)
+    months = {"A": "2026-09", "B": "2026-08"}
+    cov = coverage({"A": 60_000, "B": 40_000}, holdings, months, date(2026, 10, 1))
+    assert observations(ov, cov, months) == []
+    [obs] = observations(ov, cov, months, overlap_threshold_pct=40)
     assert obs["code"] == "high_overlap" and obs["funds"] == ["A", "B"]
     assert "40.0%" in obs["text"] and "2 common securities" in obs["text"] and "EUIN" in obs["text"]
+    assert "A (holdings as of 2026-09) and B (holdings as of 2026-08)" in obs["text"]
 
 
 def _all_texts():
     """Every observation and objective-check output the code can produce, keyed by code / status."""
     holdings, ex = _two_fund_exposure()
     ov = pairwise_overlap(holdings)
-    cov = coverage({"A": 60_000, "B": 40_000, "C": 10_000}, holdings, {"A": "2026-09", "B": "2026-05"},
-                   date(2026, 10, 1))
-    out = {o["code"]: o["text"] for o in observations(ex, ov, concentration(ex, ov), cov, overlap_threshold_pct=0)}
+    months = {"A": "2026-09", "B": "2026-05"}
+    cov = coverage({"A": 60_000, "B": 40_000, "C": 10_000}, holdings, months, date(2026, 10, 1))
+    out = {o["code"]: o["text"] for o in observations(ov, cov, months, overlap_threshold_pct=0)}
     checks = objective_checks(ex, {"max_security_pct": 50, "max_sector_pct": 10, "avoid": ["Y Soft"]})
     checks += objective_checks(ex, None)
     out.update({c["status"]: str(c) for c in checks})
+    bad = [{"from_fund": "A", "to_fund": "B", "amount_inr": 0}, {"from_fund": "A", "to_fund": "A", "amount_inr": 1},
+           {"from_fund": "Q", "to_fund": "B", "amount_inr": 1}, {"from_fund": "A", "to_fund": "Q", "amount_inr": 1},
+           {"from_fund": "A", "to_fund": "B", "amount_inr": 10**9}]
+    sim = simulate_changes(holdings, {"A": 60_000, "B": 40_000}, bad)
+    out["simulate_reasons"] = " ".join(c["reason"] for c in sim["changes_applied"])
+    screen = low_overlap_screen(holdings, {"A": 60_000, "B": 40_000}, {})
+    out["screen"] = screen["criterion"] + " " + screen["note"]
     return out
 
 
 @pytest.mark.parametrize("code", ["high_overlap", "low_coverage", "stale_disclosure",
-                                  "within", "exceeds", "present", "info"])
+                                  "within", "exceeds", "present", "info", "simulate_reasons", "screen"])
 def test_wording_guard(code):
-    text = _all_texts()[code].lower()
+    text = _all_texts()[code].lower().replace("not a recommendation", "")  # the screen note's own disclaimer
     assert [w for w in BANNED_WORDS if w in text] == []
+
+
+def test_simulate_moving_half_of_a_into_b():
+    # A 60k -> 30k, B 40k -> 70k. X: 300*40 + 700*10 = 19,000; Y: 9,000 + 35,000 = 44,000; Z: 6,000; W: 21,000.
+    holdings, _ = _two_fund_exposure()
+    move = {"from_fund": "A", "to_fund": "B", "amount_inr": 30_000}
+    out = simulate_changes(holdings, {"A": 60_000, "B": 40_000}, [move])
+    assert out["changes_applied"] == [{**move, "applied": True, "reason": None}]
+    after = out["after"]
+    assert {e["name"]: e["pct"] for e in after["exposures"]["securities"]} == approx(
+        {"X Bank": 19, "Y Soft": 44, "Z Bank": 6, "W Oil": 21, "Cash": 10})
+    assert {e["name"]: e["pct"] for e in after["exposures"]["sectors"]} == approx(
+        {"Financials": 25, "IT": 44, "Energy": 21, "Unclassified": 10})
+    assert after["overlap"] == out["before"]["overlap"]  # overlap is between funds' weights, not rupees
+    assert after["concentration"]["hhi"] == approx(2774 / 8100)  # (44^2 + 21^2 + 19^2 + 6^2) / 90^2
+    deltas = {d["name"]: (d["before_pct"], d["after_pct"], d["delta_pct"]) for d in out["deltas"]["securities"]}
+    assert deltas == {"X Bank": approx((28, 19, -9)), "W Oil": approx((12, 21, 9)),
+                      "Y Soft": approx((38, 44, 6)), "Z Bank": approx((12, 6, -6))}  # Cash unchanged, left out
+    assert [d["name"] for d in out["deltas"]["sectors"]] == ["Financials", "Energy", "IT"]  # -15, +9, +6
+
+
+def test_simulate_amount_above_holding_not_applied():
+    holdings, _ = _two_fund_exposure()
+    move = {"from_fund": "A", "to_fund": "B", "amount_inr": 70_000}
+    out = simulate_changes(holdings, {"A": 60_000, "B": 40_000}, [move])
+    [c] = out["changes_applied"]
+    assert c["applied"] is False and "60,000" in c["reason"]
+    assert out["after"] == out["before"] and out["deltas"] == {"securities": [], "sectors": [], "industries": []}
+
+
+def test_low_overlap_screen_order_and_effect():
+    # Portfolio long pcts: X 28, Y 38, Z 12, W 12 (cash excluded).
+    holdings, _ = _two_fund_exposure()
+    cands = {
+        "C1": [Row("INE1", "X Bank", "Financials", "Banks", "equity", 50),
+               Row("INE9", "V Pharma", "Health", "Pharma", "equity", 50)],  # min(50,28) = 28
+        "C2": [Row("INE4", "W Oil", "Energy", "Oil", "equity", 10),
+               Row("INE9", "V Pharma", "Health", "Pharma", "equity", 90)],  # min(10,12) = 10
+        "C3": [Row("INE2", "Y Soft", "IT", "Software", "equity", 60),
+               Row("INE3", "Z Bank", "Financials", "Banks", "equity", 40)],  # 38 + 12 = 50
+        "C4": [],  # no disclosure: left out
+    }
+    out = low_overlap_screen(holdings, {"A": 60_000, "B": 40_000}, cands, amount_inr=100_000, limit=2)
+    assert out["criterion"] == "lowest overlap with your current look-through holdings"
+    assert out["note"] == SCREEN_NOTE == (
+        "Screen on one criterion (overlap), not a recommendation. It ignores returns, risk, cost and your goals.")
+    assert [(c["name"], c["overlap_pct"]) for c in out["candidates"]] == [("C2", approx(10)), ("C1", approx(28))]
+    # +100k into C2 (total 200k): V 90,000 = 45%; Y 19, X 14, W (12,000 + 10,000) 11, Z 6.
+    assert out["candidates"][0]["effect"] == {"top_security_pct_after": approx(45),
+                                              "effective_stocks_after": approx(9025 / 2739)}
+    no_amount = low_overlap_screen(holdings, {"A": 60_000, "B": 40_000}, cands)
+    assert [c["name"] for c in no_amount["candidates"]] == ["C2", "C1", "C3"]
+    assert "effect" not in no_amount["candidates"][0] and no_amount["amount_inr"] is None
