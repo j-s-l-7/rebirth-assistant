@@ -34,6 +34,9 @@ export default function ChatPage() {
           <Link href="/xray" className="rounded-full px-3 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand">
             Portfolio X-ray
           </Link>
+          <Link href="/data" className="rounded-full px-3 py-1.5 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand">
+            Data library
+          </Link>
           <button
             type="button"
             onClick={() => {
