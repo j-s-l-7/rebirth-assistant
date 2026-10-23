@@ -118,6 +118,10 @@ Rules it follows: facts and comparisons only, no buy/sell/switch wording (a bann
 
 Sources and per-AMC notes: `backend/app/data/portfolio_sources.py`.
 
+## Data library (internal, local only)
+
+Page `/data`: a catalogue of every "book" we hold per fund (NAV history, scheme details, expense ratio, metrics, holdings, the original AMC file, the performance feed): whether it is available, where it is kept, its details, and **Open here** (table, sheet or zip preview) or **Download** for original files. The top shows overall completion (average across those datasets for the 1,640 investable funds; 58.8% today); clicking it lists what is missing by dataset and AMC, with the reason. API under `/api/data/*` (`backend/app/api/data_explorer.py`). It has **no login**, so the router mounts only when `DATA_EXPLORER_ENABLED=true` (keep it false in production). Original files are copied by `register-files` into `SOURCE_FILES_DIR` (default `backend/data/source_files/`, git-ignored): 148 files, 70 MB.
+
 ## Architecture
 
 ```mermaid
