@@ -234,7 +234,7 @@ def _sheet_preview(data: bytes, filename: str, sheet: str | None, limit: int) ->
     def cell(v) -> str:
         return "" if v is None else str(v)
 
-    if filename.lower().endswith(".xls"):
+    if not data.startswith(b"PK"):  # legacy .xls; AMCs also name real .xlsx files ".xls", so go by content
         import xlrd
 
         book = xlrd.open_workbook(file_contents=data)
