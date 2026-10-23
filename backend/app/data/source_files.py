@@ -10,10 +10,10 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import BACKEND_DIR
+from app.config import get_settings
 from app.models import SourceFile
 
-SOURCE_DIR = BACKEND_DIR / "data" / "source_files"
+SOURCE_DIR = Path(get_settings().source_files_dir)
 EXTS = {".xls", ".xlsx", ".zip"}
 
 

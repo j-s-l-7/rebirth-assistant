@@ -49,6 +49,8 @@ class Settings(BaseSettings):
 
     # Internal, local-only data explorer (/api/data/*). Unauthenticated: never enable in production.
     data_explorer_enabled: bool = False
+    # Where original AMC files are kept; set it next to the shared local DB when several checkouts use one DB.
+    source_files_dir: str = str(BACKEND_DIR / "data" / "source_files")
 
     # --- Data freshness and telemetry (app/freshness.py, app/telemetry.py) ------------------------
     # Fund data is stale when the latest NAV date or ranking run is more than this many business
