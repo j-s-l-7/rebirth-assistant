@@ -93,7 +93,7 @@ def missing(dataset: str, amc: str | None = None, q: str | None = None, limit: i
     by_amc: dict[str, int] = {}
     for f in gaps:
         by_amc[f.amc_name] = by_amc.get(f.amc_name, 0) + 1
-    shown = [f for f in gaps if (not amc or f.amc_name == amc) and (not q or q.lower() in f.name.lower())]
+    shown = [f for f in gaps if (not amc or amc.lower() in f.amc_name.lower()) and (not q or q.lower() in f.name.lower())]
     return {"dataset": dataset, "total_missing": len(gaps),
             "by_amc": [{"amc": a, "missing": n, "reason": _reason(a, dataset)} for a, n in sorted(by_amc.items(), key=lambda x: -x[1])],
             "funds": [{"amfi_code": f.amfi_code, "name": f.name, "amc": f.amc_name, "category": f.category_key}
@@ -301,7 +301,7 @@ def catalog(q: str | None = None, kind: str | None = Query(None, pattern="^(data
     items: list[dict] = []
     ql = q.lower() if q else None
     if kind in (None, "dataset"):
-        funds = [f for f in _universe(db) if (not amc or f.amc_name == amc) and (not ql or ql in f.name.lower() or ql in f.amc_name.lower())]
+        funds = [f for f in _universe(db) if (not amc or amc.lower() in f.amc_name.lower()) and (not ql or ql in f.name.lower() or ql in f.amc_name.lower())]
         funds.sort(key=lambda f: (f.amc_name, f.name))
         have = _have(db, funds)
         months = {c: m for c, m in db.execute(select(SchemeHolding.amfi_code, func.max(SchemeHolding.disclosure_month))
@@ -320,7 +320,7 @@ def catalog(q: str | None = None, kind: str | None = Query(None, pattern="^(data
                               "open_url": f"/api/data/funds/{f.amfi_code}/datasets/{key}"})
     if kind in (None, "file") and not dataset and available is not False:
         for r in db.scalars(select(SourceFile).order_by(SourceFile.amc_name, SourceFile.disclosure_month.desc(), SourceFile.filename)):
-            if (amc and r.amc_name != amc) or (ql and ql not in r.filename.lower() and ql not in r.amc_name.lower()):
+            if (amc and amc.lower() not in r.amc_name.lower()) or (ql and ql not in r.filename.lower() and ql not in r.amc_name.lower()):
                 continue
             items.append({"id": r.id, "kind": "file", "title": r.filename, "fund": None, "amc": r.amc_name, "dataset_key": "files",
                           "available": True, "location": f"Stored file: source_files/{r.stored_path}. Original: {r.source_url}",
