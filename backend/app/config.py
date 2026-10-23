@@ -42,11 +42,23 @@ class Settings(BaseSettings):
     # Compliance identity shown in UI and disclosures.
     distributor_name: str = "[DistCo] Pvt Ltd"
     arn: str = "ARN-PENDING"
-    euin: str = "E000000"
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
-    # When set, /admin/* endpoints require the X-Admin-Token header.
+    # /admin/* endpoints require this value in the X-Admin-Token header; unset, they are disabled.
     admin_token: str | None = None
+
+    # Internal, local-only data explorer (/api/data/*). Unauthenticated: never enable in production.
+    data_explorer_enabled: bool = False
+    # Where original AMC files are kept; set it next to the shared local DB when several checkouts use one DB.
+    source_files_dir: str = str(BACKEND_DIR / "data" / "source_files")
+
+    # --- Data freshness and telemetry (app/freshness.py, app/telemetry.py) ------------------------
+    # Fund data is stale when the latest NAV date or ranking run is more than this many business
+    # days (Mon-Fri) behind today in IST. A lag of 1 is normal during the day.
+    freshness_max_lag_business_days: int = 2
+    # Logs: "json" (one object per line, for the host's log search) or "text".
+    log_format: str = "json"
+    log_level: str = "INFO"
 
 
 @lru_cache

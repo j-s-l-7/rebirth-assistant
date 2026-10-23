@@ -345,7 +345,7 @@ def supabase(monkeypatch, archive_dir):
     monkeypatch.setattr(archive, "_sleep", lambda s: None)
 
     def install(api: _Supabase) -> _Supabase:
-        monkeypatch.setattr(archive, "_http_client", lambda: httpx.Client(transport=httpx.MockTransport(api)))
+        monkeypatch.setattr(archive, "http_client", lambda **kw: httpx.Client(transport=httpx.MockTransport(api)))
         return api
 
     return install
@@ -403,7 +403,7 @@ URL = "https://www.amfiindia.com/uploads/sample_circular.pdf"
 
 def _ingest(db, data, **kw):
     args = dict(url=URL, source="amfi", doc_type="circular", title="Sample circular", data=data, content_type="application/pdf")
-    return store.ingest_document(db, **{**args, **kw})
+    return store.ingest(db, **{**args, **kw})[0]
 
 
 def test_ingest_stores_original_text_and_metadata(docs_db, archive_dir):
@@ -710,7 +710,7 @@ class _Web:
 @pytest.fixture
 def web(monkeypatch, no_waiting, docs_db):
     site = _Web()
-    monkeypatch.setattr(sources, "_client", lambda: _client_for(site))
+    monkeypatch.setattr(sources, "http_client", lambda: _client_for(site))
     return site
 
 

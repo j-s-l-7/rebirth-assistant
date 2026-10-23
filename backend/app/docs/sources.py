@@ -23,8 +23,8 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.docs.store import PIPELINE_VERSION, ingest
+from app.http import http_client
 from app.models import Document
 
 log = logging.getLogger(__name__)
@@ -126,15 +126,6 @@ class SourceBlocked(SourceError):
     """The site refuses automated clients (401/403). Reported, never worked around."""
 
 
-def _client() -> httpx.Client:
-    s = get_settings()
-    return httpx.Client(
-        timeout=httpx.Timeout(s.http_timeout_s, connect=20.0),
-        follow_redirects=True,
-        headers={"User-Agent": "ra-backend/0.1 (+mutual fund data sync)"},
-    )
-
-
 def fetch(client: httpx.Client, url: str, *, pdf: bool = True, attempts: int = 4) -> tuple[bytes, str]:
     """GET with retries and backoff for transient trouble (network errors, 429/5xx, an HTML error
     page served where a PDF should be). Returns (body, content type)."""
@@ -182,7 +173,7 @@ def sync_documents(db: Session, monthly_reports: int = 24, progress: Callable[[i
         if progress:
             progress(summary["documents"], total, title, status)
 
-    with _client() as client:
+    with http_client() as client:
         monthly: list[SourceDoc] = []
         index_problem: SourceError | None = None
         if monthly_reports > 0:

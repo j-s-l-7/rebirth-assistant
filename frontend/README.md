@@ -1,13 +1,13 @@
 # RA web app
 
-Next.js 16 (App Router) client for the RA backend. Pages: onboarding (`/`), portfolio (`/dashboard`), Ask RA (`/chat`), suggestions (`/recommendations`), tax (`/tax`), CAS import (`/import`), risk profile (`/profile`).
+Next.js 16 (App Router) chat client for the RA backend: one page, `/chat` (`/` redirects there).
 
-Layout: `app/layout.tsx` is the document shell only (light theme). `app/(site)/` adds the nav and compliance footer around every page except `/chat`, which lives in `app/(chat)/` as a standalone white chat window (`components/chat/`); it opens a Guest investor automatically when none is selected.
+`app/layout.tsx` is the document shell (light theme); `app/(chat)/` holds the standalone white chat window (`components/chat/`). Each browser chats as its own guest: the guest investor id is kept in localStorage until sign-in ships, and the latest conversation reloads on refresh.
 
 ```bash
 npm install
 cp .env.example .env.local   # NEXT_PUBLIC_API_URL defaults to http://localhost:8000/api
-npm run dev                  # http://localhost:3000
+npm run dev                  # http://localhost:3000/chat
 ```
 
-Data is fetched in the browser from the FastAPI backend; the selected investor is kept in localStorage until OTP sign-in ships. Any page accepts `?investor=<id>` to open a specific (demo) investor.
+Answers stream from `POST /api/chat/sessions/{id}/messages` as server-sent events (`status`, `text`, `done`, `error`); `done.text` is the compliance-checked answer and replaces the streamed text. See `lib/api.ts` and `components/chat/useChat.ts`.

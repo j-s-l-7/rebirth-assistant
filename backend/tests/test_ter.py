@@ -16,6 +16,7 @@ import httpx
 import pytest
 from sqlalchemy import delete, func, select
 
+from app import http
 from app.data import ter
 from app.models import Scheme, SchemeDetail, SchemeLink, SchemeTer
 
@@ -80,7 +81,7 @@ def clean(db):
 
 @pytest.fixture(autouse=True)
 def no_sleep(monkeypatch):
-    monkeypatch.setattr(ter, "_backoff", lambda attempt: None)
+    monkeypatch.setattr(http, "_sleep", lambda seconds: None)
 
 
 # --------------------------------------------------------------------------- parsing
@@ -426,7 +427,7 @@ def patch_network(monkeypatch, sources: dict[str, bytes], failing=()):
             raise RuntimeError(f"AMFI TER month {month} failed after 3 attempts")
         return ter.read_xlsx_rows(sources[month])
 
-    monkeypatch.setattr(ter, "_client", lambda: contextlib.nullcontext())
+    monkeypatch.setattr(ter, "http_client", lambda: contextlib.nullcontext())
     monkeypatch.setattr(ter, "list_months", lambda client, months=36, today=None: wanted[:months])
     monkeypatch.setattr(ter, "fetch_month_rows", fetch)
 
@@ -512,7 +513,7 @@ def test_a_failing_month_is_attempted_once_per_run(db, monkeypatch):
 @pytest.mark.parametrize("order", list(itertools.permutations(MONTHS)))
 def test_one_month_per_sync_in_any_order_gives_the_canonical_rows(db, monkeypatch, order):
     """Gap-fill / out-of-order runs: sync_ter refreshes the next stored month so no boundary row goes stale."""
-    monkeypatch.setattr(ter, "_client", lambda: contextlib.nullcontext())
+    monkeypatch.setattr(ter, "http_client", lambda: contextlib.nullcontext())
     monkeypatch.setattr(ter, "fetch_month_rows", lambda client, month: month_rows(month))
     for m in order:
         monkeypatch.setattr(ter, "list_months", lambda client, months=36, today=None, m=m: [m])
@@ -528,7 +529,7 @@ def test_one_month_per_sync_in_any_order_gives_the_canonical_rows(db, monkeypatc
 def test_sync_refreshes_the_next_stored_month(db, monkeypatch):
     for m in ("08-2026", "10-2026"):
         store(db, m)  # September was missing when these were synced
-    monkeypatch.setattr(ter, "_client", lambda: contextlib.nullcontext())
+    monkeypatch.setattr(ter, "http_client", lambda: contextlib.nullcontext())
     monkeypatch.setattr(ter, "list_months", lambda client, months=36, today=None: ["09-2026"])
     monkeypatch.setattr(ter, "fetch_month_rows", lambda client, month: month_rows(month))
     out = ter.sync_ter(db, months=1)
@@ -633,32 +634,13 @@ def test_latest_ter_uses_the_latest_row_and_the_plan_of_each_code(db):
     assert ter.latest_ter(db, set()) == {}
 
 
-def test_category_ter_stats(db):
-    entries = [(f"C/{i}", f"Zephyr Cat Fund {i}", r, d) for i, (r, d) in enumerate([(1.0, 0.5), (1.5, 1.0), (2.0, 1.5), (2.5, 2.0), (3.0, 2.5)], 1)]
-    entries += [("C/6", "Zephyr Cat Fund 6", 9.0, 8.0), ("C/7", "Zephyr Other Cat Fund 7", 8.0, 7.0), ("C/8", "Zephyr Cat Fund 8", 7.0, 6.0)]
-    seed_ter(db, entries)
-    for i in range(1, 6):
-        add_scheme(db, TEST_CODES + i, f"Zephyr Cat Fund {i} - Regular Plan - Growth")
-    add_scheme(db, TEST_CODES + 6, "Zephyr Cat Fund 6 - Regular Plan - Growth", in_universe=False)  # not investable
-    add_scheme(db, TEST_CODES + 7, "Zephyr Other Cat Fund 7 - Regular Plan - Growth", category="ter_test_other")
-    add_scheme(db, TEST_CODES + 8, "Zephyr Cat Fund 8 - Regular Plan - Growth")
-    add_scheme(db, TEST_CODES + 9, "Zephyr Cat Fund 8 - Regular Plan - IDCW", option="idcw")  # a second code of the same scheme counts once
-    add_scheme(db, TEST_CODES + 10, "Zephyr Cat Fund 10 - Regular Plan - Growth")  # no TER disclosed
-    db.commit()
-    ter.link_ter_codes(db)
-
-    reg = ter.category_ter_stats(db, "ter_test_cat")  # 1.0 1.5 2.0 2.5 3.0 7.0
-    assert reg["n"] == 6 and reg["median"] == pytest.approx(2.25) and reg["p25"] == pytest.approx(1.625) and reg["p75"] == pytest.approx(2.875)
-    direct = ter.category_ter_stats(db, "ter_test_cat", plan="direct")  # 0.5 1.0 1.5 2.0 2.5 6.0
-    assert direct["n"] == 6 and direct["median"] == pytest.approx(1.75) and direct["p25"] == pytest.approx(1.125)
-    assert ter.category_ter_stats(db, "ter_test_empty") is None
-
-
-def test_category_ter_stats_with_one_scheme_and_zero_ter(db):
-    add_scheme(db, TEST_CODES + 1, "Zephyr Solo Fund - Regular Plan - Growth", category="ter_test_solo")
-    add_scheme(db, TEST_CODES + 2, "Zephyr Free Fund - Regular Plan - Growth", category="ter_test_solo")
+def test_latest_ter_for_one_plan_costs_every_code_alike_and_skips_absent_plans(db):
+    add_scheme(db, TEST_CODES + 1, "Zephyr Solo Fund - Regular Plan - Growth")
+    add_scheme(db, TEST_CODES + 2, "Zephyr Solo Fund - Direct Plan - Growth", plan="direct")
+    add_scheme(db, TEST_CODES + 3, "Zephyr Free Fund - Regular Plan - Growth")
     db.commit()
     seed_ter(db, [("S/1", "Zephyr Solo Fund", 1.8, 0.9), ("S/2", "Zephyr Free Fund", 0.0, 0.7)])  # R_TER 0 = no such plan
     ter.link_ter_codes(db)
-    assert ter.category_ter_stats(db, "ter_test_solo") == {"median": 1.8, "p25": 1.8, "p75": 1.8, "n": 1}
-    assert ter.category_ter_stats(db, "ter_test_solo", plan="direct")["n"] == 2
+    got = ter.latest_ter(db, {TEST_CODES + 1, TEST_CODES + 2, TEST_CODES + 3}, plan="regular")
+    assert {c: v["ter"] for c, v in got.items()} == {TEST_CODES + 1: 1.8, TEST_CODES + 2: 1.8}  # never a 0% "free" fund
+    assert set(ter.current_ter_rows(db, {TEST_CODES + 1, TEST_CODES + 3, 123})) == {TEST_CODES + 1, TEST_CODES + 3}

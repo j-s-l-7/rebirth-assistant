@@ -10,18 +10,18 @@ parsed by the header line's column names rather than fixed positions.
 
 import logging
 import re
-import time
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import extract, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.data.bulk import copy_nav_points, upsert
+from app.http import http_client, with_retries
 from app.models import NavPoint, Scheme, SchemeDetail
 from app.reference.categories import (
     BENCHMARK_PROXIES,
@@ -144,15 +144,6 @@ def iter_rows(lines: Iterable[str]) -> Iterator[SchemeRow]:
         )
 
 
-def _client() -> httpx.Client:
-    s = get_settings()
-    return httpx.Client(
-        timeout=httpx.Timeout(s.http_timeout_s, connect=20.0),
-        follow_redirects=True,
-        headers={"User-Agent": "ra-backend/0.1 (+mutual fund data sync)"},
-    )
-
-
 def is_investable(row: SchemeRow, category_key: str, plan: str, option: str, latest_date: date | None = None) -> bool:
     """PRD §11.1 universe filter (the parts knowable from the scheme master). A scheme that
     hasn't published a NAV within 30 days of the file's latest date is dormant."""
@@ -172,7 +163,7 @@ def is_investable(row: SchemeRow, category_key: str, plan: str, option: str, lat
 def sync_scheme_master(db: Session) -> dict:
     """Download NAVAll.txt, upsert every scheme, and append today's NAV for tracked schemes."""
     s = get_settings()
-    with _client() as client:
+    with http_client() as client:
         resp = client.get(s.amfi_nav_url)
         resp.raise_for_status()
         rows = list(iter_rows(resp.text.splitlines()))
@@ -248,25 +239,23 @@ class EmptyWindow(ValueError):
 def _history_window(start: date, end: date, codes: set[int]) -> list[tuple[int, date, float]]:
     s = get_settings()
     params = {"tp": "1", "frmdt": start.strftime("%d-%b-%Y"), "todt": end.strftime("%d-%b-%Y")}
-    for attempt in range(4):
+
+    def once() -> list[tuple[int, date, float]]:
         out: list[tuple[int, date, float]] = []
         rows_seen = 0
-        try:
-            with _client() as client, client.stream("GET", s.amfi_history_url, params=params) as resp:
-                resp.raise_for_status()
-                for row in iter_rows(resp.iter_lines()):
-                    rows_seen += 1
-                    # AMFI occasionally returns stray rows dated far outside the requested range.
-                    if row.amfi_code in codes and row.nav and row.nav_date and start <= row.nav_date <= end:
-                        out.append((row.amfi_code, row.nav_date, row.nav))
-            # Every business month has thousands of NAVs; an empty answer is a failed download.
-            if rows_seen == 0 and (end - start).days >= 3:
-                raise EmptyWindow("no NAV rows in response")
-            return out
-        except (httpx.HTTPError, ValueError) as exc:
-            log.warning("AMFI history %s..%s attempt %d failed: %s", start, end, attempt + 1, exc)
-            time.sleep(2 * (attempt + 1))
-    raise RuntimeError(f"AMFI history download failed for {start}..{end}")
+        with http_client() as client, client.stream("GET", s.amfi_history_url, params=params) as resp:
+            resp.raise_for_status()
+            for row in iter_rows(resp.iter_lines()):
+                rows_seen += 1
+                # AMFI occasionally returns stray rows dated far outside the requested range.
+                if row.amfi_code in codes and row.nav and row.nav_date and start <= row.nav_date <= end:
+                    out.append((row.amfi_code, row.nav_date, row.nav))
+        # Every business month has thousands of NAVs; an empty answer is a failed download.
+        if rows_seen == 0 and (end - start).days >= 3:
+            raise EmptyWindow("no NAV rows in response")
+        return out
+
+    return with_retries(f"AMFI history {start}..{end}", once, retry_on=(httpx.HTTPError, ValueError))
 
 
 def month_windows(start: date, end: date) -> list[tuple[date, date]]:
@@ -319,9 +308,11 @@ def history_gaps(db: Session, years: int | None = None) -> list[tuple[date, date
     years = years or s.nav_history_years
     end = date.today()
     start = date(end.year - years, end.month, 1)
-    counts = {}
-    for a, b in month_windows(start, end):
-        counts[(a, b)] = db.query(NavPoint).filter(NavPoint.nav_date >= a, NavPoint.nav_date <= b).count()
+    # One grouped scan instead of a COUNT per month (nav_date is not the leading key of any index).
+    year, month = extract("year", NavPoint.nav_date), extract("month", NavPoint.nav_date)
+    stored = {(int(y), int(m)): n for y, m, n in db.execute(
+        select(year, month, func.count()).where(NavPoint.nav_date >= start, NavPoint.nav_date <= end).group_by(year, month))}
+    counts = {(a, b): stored.get((a.year, a.month), 0) for a, b in month_windows(start, end)}
     keys = list(counts)
     gaps = []
     for i, k in enumerate(keys):
@@ -347,7 +338,7 @@ def repair_history(db: Session, workers: int = 4, progress=None) -> dict:
 def backfill_scheme_mfapi(db: Session, amfi_code: int) -> int:
     """Per-scheme fallback (e.g. a held Direct plan outside the universe) via mfapi.in."""
     s = get_settings()
-    with _client() as client:
+    with http_client() as client:
         resp = client.get(f"{s.mfapi_base_url}/{amfi_code}")
         resp.raise_for_status()
         data = resp.json().get("data") or []
@@ -365,10 +356,14 @@ def backfill_scheme_mfapi(db: Session, amfi_code: int) -> int:
 
 def ensure_history(db: Session, codes: Iterable[int], min_points: int = 30) -> list[int]:
     """Backfill any scheme with too little stored history (best-effort, network permitting)."""
+    wanted = sorted(set(codes))
+    stored: dict[int, int] = {}
+    for i in range(0, len(wanted), 900):
+        stored.update(db.execute(select(NavPoint.amfi_code, func.count()).where(NavPoint.amfi_code.in_(wanted[i : i + 900]))
+                                 .group_by(NavPoint.amfi_code)).all())
     filled = []
-    for code in set(codes):
-        n = db.query(NavPoint).filter(NavPoint.amfi_code == code).count()
-        if n < min_points:
+    for code in wanted:
+        if stored.get(code, 0) < min_points:
             try:
                 backfill_scheme_mfapi(db, code)
                 filled.append(code)

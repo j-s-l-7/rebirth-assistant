@@ -22,15 +22,14 @@ import csv
 import io
 import logging
 import re
-import time
 from datetime import date, datetime, timezone
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.data.amfi import _client, _parse_date
+from app.data.amfi import _parse_date
 from app.data.bulk import upsert
+from app.http import http_client, with_retries
 from app.models import Scheme, SchemeDetail
 
 log = logging.getLogger(__name__)
@@ -140,19 +139,16 @@ def parse_scheme_details(text: str) -> list[dict]:
 
 
 def fetch_scheme_details(url: str = SCHEME_DETAILS_URL, attempts: int = 4) -> str:
-    for attempt in range(attempts):
+    def once() -> str:
+        with http_client() as client:
+            resp = client.get(url)
+            resp.raise_for_status()
         try:
-            with _client() as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-            try:
-                return resp.content.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                return resp.content.decode("cp1252")
-        except httpx.HTTPError as exc:
-            log.warning("AMFI scheme details attempt %d failed: %s", attempt + 1, exc)
-            time.sleep(2 * (attempt + 1))
-    raise RuntimeError("AMFI scheme details download failed")
+            return resp.content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return resp.content.decode("cp1252")
+
+    return with_retries("AMFI scheme details download", once, attempts=attempts)
 
 
 def sync_scheme_details(db: Session) -> dict:

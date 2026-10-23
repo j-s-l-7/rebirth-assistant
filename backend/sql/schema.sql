@@ -53,15 +53,9 @@ CREATE INDEX ix_document_doc_type ON document (doc_type);
 CREATE TABLE investor (
 	id VARCHAR(32) NOT NULL, 
 	display_name VARCHAR(120) NOT NULL, 
-	pan_enc BYTEA, 
-	pan_hash VARCHAR(64), 
-	pan_masked VARCHAR(16), 
-	risk_bucket VARCHAR(32), 
-	tax_slab_pct FLOAT, 
 	is_demo BOOLEAN NOT NULL, 
 	created_at TIMESTAMP WITH TIME ZONE NOT NULL, 
-	PRIMARY KEY (id), 
-	UNIQUE (pan_hash)
+	PRIMARY KEY (id)
 );
 
 CREATE TABLE scheme (
@@ -84,12 +78,12 @@ CREATE TABLE scheme (
 	PRIMARY KEY (amfi_code)
 );
 
-CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
 CREATE INDEX ix_scheme_category_key ON scheme (category_key);
-CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
-CREATE INDEX ix_scheme_isin_growth ON scheme (isin_growth);
-CREATE INDEX ix_scheme_isin_reinvest ON scheme (isin_reinvest);
 CREATE INDEX ix_scheme_name ON scheme (name);
+CREATE INDEX ix_scheme_amc_name ON scheme (amc_name);
+CREATE INDEX ix_scheme_isin_reinvest ON scheme (isin_reinvest);
+CREATE INDEX ix_scheme_isin_growth ON scheme (isin_growth);
+CREATE INDEX ix_scheme_in_universe ON scheme (in_universe);
 
 CREATE TABLE scheme_detail (
 	amfi_code INTEGER NOT NULL, 
@@ -169,6 +163,24 @@ CREATE TABLE scheme_ter (
 
 CREATE INDEX ix_scheme_ter_nsdl_code ON scheme_ter (nsdl_code);
 
+CREATE TABLE source_file (
+	id VARCHAR(32) NOT NULL, 
+	amc_name VARCHAR(120) NOT NULL, 
+	disclosure_month DATE NOT NULL, 
+	kind VARCHAR(20) NOT NULL, 
+	filename VARCHAR(255) NOT NULL, 
+	sha256 VARCHAR(64) NOT NULL, 
+	size_bytes INTEGER NOT NULL, 
+	source_url TEXT NOT NULL, 
+	via VARCHAR(10) NOT NULL, 
+	stored_path TEXT NOT NULL, 
+	registered_at TIMESTAMP WITH TIME ZONE NOT NULL, 
+	PRIMARY KEY (id), 
+	UNIQUE (sha256)
+);
+
+CREATE INDEX ix_source_file_amc_name ON source_file (amc_name);
+
 CREATE TABLE chat_session (
 	id VARCHAR(32) NOT NULL, 
 	investor_id VARCHAR(32) NOT NULL, 
@@ -228,11 +240,18 @@ CREATE TABLE scheme_portfolio (
 	security_isin VARCHAR(12), 
 	security_name VARCHAR(160) NOT NULL, 
 	sector VARCHAR(80), 
+	industry VARCHAR(120), 
+	asset_class VARCHAR(20), 
 	weight_pct FLOAT NOT NULL, 
+	market_value_inr FLOAT, 
+	quantity FLOAT, 
+	rating VARCHAR(40), 
+	source_url TEXT, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(amfi_code) REFERENCES scheme (amfi_code)
 );
 
+CREATE INDEX ix_scheme_portfolio_security_isin ON scheme_portfolio (security_isin);
 CREATE INDEX ix_scheme_portfolio_amfi_code ON scheme_portfolio (amfi_code);
 
 CREATE TABLE chat_message (

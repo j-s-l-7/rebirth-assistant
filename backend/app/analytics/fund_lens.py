@@ -23,7 +23,8 @@ from sqlalchemy.orm import Session
 from app.analytics.navbook import NavBook
 from app.analytics.performance import benchmark_label, ensure_metrics, latest_metrics
 from app.data.linking import norm_name
-from app.models import NavPoint, Scheme, SchemeDetail, SchemeHolding, SchemeLink, SchemePerformance, SchemeTer
+from app.data.ter import current_ter_rows
+from app.models import NavPoint, Scheme, SchemeDetail, SchemeHolding, SchemeLink, SchemePerformance
 from app.reference.categories import RISK_LABELS, get_category
 
 # SEBI category mandates in brief (structural diversification rules). Summary wording; the
@@ -141,6 +142,19 @@ def resolve_funds(db: Session, query: str, limit: int = 6) -> list[dict]:
              "category": get_category(s.category_key).label, "in_peer_set": s.in_universe} for s in rows[:limit]]
 
 
+def is_weak_match(query: str, name: str, clear: int = 85) -> bool:
+    """True when `name` is not a clear match for `query`: a query word is missing from it, or it carries
+    extra distinguishing words (e.g. 'US', 'Equity') the query lacks."""
+    qt, nt = set(norm_name(query).split()) - GENERIC_WORDS, set(norm_name(name).split()) - GENERIC_WORDS
+    if fuzz.token_sort_ratio(" ".join(qt), " ".join(nt)) >= clear:
+        return False
+    return bool(qt ^ nt)
+
+
+def candidate_names(matches: list[dict], n: int = 5) -> list[str]:
+    return list(dict.fromkeys(m["name"] for m in matches))[:n]
+
+
 def regular_growth_sibling(db: Session, s: Scheme) -> Scheme:
     """The Regular-Growth plan of the same scheme (itself if it already is one)."""
     if s.plan_type == "regular" and s.option_type == "growth":
@@ -159,13 +173,11 @@ def _peer_metrics(db: Session, category_key: str) -> dict[int, dict]:
 
 
 def _ter_pair(db: Session, code: int) -> dict | None:
-    row = db.execute(
-        select(SchemeTer).join(SchemeLink, (SchemeLink.external_key == SchemeTer.nsdl_code) & (SchemeLink.source == "ter"))
-        .where(SchemeLink.amfi_code == code).order_by(SchemeTer.effective_from.desc()).limit(1)
-    ).scalar()
+    row = current_ter_rows(db, [code]).get(code)
     if row is None:
         return None
-    return {"regular": row.r_ter, "direct": row.d_ter, "regular_breakdown": {"base": row.r_ber, "brokerage": row.r_brokerage,
+    # AMFI writes 0 for a plan the scheme doesn't have: report it as absent, not as a free fund.
+    return {"regular": row.r_ter or None, "direct": row.d_ter or None, "regular_breakdown": {"base": row.r_ber, "brokerage": row.r_brokerage,
             "transaction": row.r_transaction, "statutory": row.r_statutory}, "effective_from": row.effective_from.isoformat()}
 
 
@@ -193,7 +205,11 @@ def _holdings(db: Session, code: int) -> dict | None:
     for r in rows:
         sectors[r.sector or "Unclassified"] = sectors.get(r.sector or "Unclassified", 0.0) + r.weight_pct
     top_sector = max(sectors.items(), key=lambda kv: kv[1]) if sectors else None
+    top = sorted((r for r in rows if r.security_isin), key=lambda r: r.weight_pct, reverse=True)[:5]
+    top_sectors = sorted(((k, v) for k, v in sectors.items() if k != "Unclassified"), key=lambda kv: kv[1], reverse=True)[:5]
     return {"disclosure_month": month.isoformat(), "holdings": len(rows), "top10_weight_pct": round(sum(weights[:10]), 1),
+            "top_holdings": [{"name": r.security_name, "weight_pct": round(r.weight_pct, 2)} for r in top],
+            "top_sectors": [{"name": k, "weight_pct": round(v, 2)} for k, v in top_sectors],
             "top_sector": {"name": top_sector[0], "weight_pct": round(top_sector[1], 1)} if top_sector else None}
 
 
@@ -256,7 +272,7 @@ def fund_lens(db: Session, amfi_code: int, nb: NavBook | None = None) -> dict:
                             "tracking_error_pct": by_key["tracking_error_3y"]["fund"], "beta": by_key["beta_3y"]["fund"],
                             "category_median_r_squared": by_key["r_squared_3y"].get("category_median"),
                             "stock_level": holdings,
-                            "basis": "portfolio disclosure" if holdings else "NAV behaviour vs index (stock-level holdings not loaded yet)"},
+                            "basis": "portfolio disclosure" if holdings else "NAV behaviour vs index (no portfolio disclosure loaded for this fund; other funds may have one)"},
         "asset_mix": {"look_through_pct": {k: round(v * 100) for k, v in cat.mix.items()}, "category_rule": CATEGORY_RULES.get(s.category_key)},
         "cost": {"standing": by_key["ter_regular"].get("standing"), "expense_ratio": ter,
                  "category_median_regular_pct": by_key["ter_regular"].get("category_median")},
@@ -283,6 +299,26 @@ def fund_lens(db: Session, amfi_code: int, nb: NavBook | None = None) -> dict:
     }
 
 
+def _overlap(db: Session, rows: list[dict]) -> dict:
+    """Pairwise holdings overlap from each fund's latest disclosure; names the funds lacking one instead."""
+    from app.analytics import xray
+    from app.portfolio_service import latest_holdings
+    held, months, missing = {}, {}, []
+    for r in rows:
+        h, month = latest_holdings(db, regular_growth_sibling(db, db.get(Scheme, r["amfi_code"])).amfi_code)
+        if h:
+            held[r["fund"]], months[r["fund"]] = h, month
+        else:
+            missing.append(r["fund"])
+    if len(rows) < 2:
+        return {}
+    if missing:
+        return {"holdings_overlap_missing": missing}
+    pairs = [{"fund_a": p["fund_a"], "fund_b": p["fund_b"], "overlap_pct": round(p["overlap_pct"], 1),
+              "common_securities": p["common_securities"]} for p in xray.pairwise_overlap(held)]
+    return {"holdings_overlap": {"disclosure_months": months, "pairs": pairs}}
+
+
 def compare_funds(db: Session, amfi_codes: list[int]) -> dict:
     nb = NavBook(db)
     lenses = [fund_lens(db, c, nb) for c in amfi_codes[:4]]
@@ -296,6 +332,7 @@ def compare_funds(db: Session, amfi_codes: list[int]) -> dict:
                                      "standing": by_key[k].get("standing")} for k in keys},
                      "aum_cr": lens["fund"]["aum_cr"], "expense_ratio": lens["d_profile"]["cost"]["expense_ratio"]})
     categories = {r["category"] for r in rows}
-    return {"as_of": max(lens["as_of"] for lens in lenses) if lenses else None, "same_category": len(categories) == 1,
+    overlap = _overlap(db, rows)
+    return {**overlap, "as_of": max(lens["as_of"] for lens in lenses) if lenses else None, "same_category": len(categories) == 1,
             "funds": rows, "metric_labels": {k: lbl for k, lbl, _ in METRICS if k in keys},
             "note": "Each fund is ranked within its own category; ranks across different categories aren't comparable."}

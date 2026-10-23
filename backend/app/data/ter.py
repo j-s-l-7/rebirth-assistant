@@ -15,9 +15,8 @@ What the data endpoint really does:
   included for most schemes; some AMCs publish business days only) and are not sorted.
 - Two layouts. Until March 2026: Base TER, 52(6A)(b), 52(6A)(c), GST, Total TER. From April 2026 (SEBI MF
   Regulations 2026): BER, brokerage, transaction cost, statutory levies, Total TER. The old layout is mapped
-  Base TER -> ber, GST -> statutory, Total -> ter, with brokerage/transaction left NULL. 52(6A)(b)/(c) have no
-  column in `scheme_ter`; they are parsed as r_6a_b/r_6a_c/d_6a_b/d_6a_c and stored automatically if the model
-  ever gains those columns.
+  Base TER -> ber, GST -> statutory, Total -> ter, with brokerage/transaction left NULL; 52(6A)(b)/(c) are
+  stored as r_6a_b/r_6a_c/d_6a_b/d_6a_c.
 - NSDL scheme codes only exist from November 2024; earlier rows have none. They are resolved by exact scheme
   name from rows that do have one, else get a stable key `NA/<hash of the name>`.
 - A TER_Date is a calendar date written as UTC midnight ("2026-09-01T00:00:00.000Z"); xlsx stores a serial.
@@ -48,9 +47,9 @@ from rapidfuzz import fuzz
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import Session
 
-from app.data.amfi import _client
 from app.data.bulk import upsert
 from app.data.linking import SchemeNameIndex, norm_name
+from app.http import http_client, with_retries
 from app.models import Scheme, SchemeDetail, SchemeLink, SchemeTer
 
 log = logging.getLogger(__name__)
@@ -275,18 +274,8 @@ def read_xlsx_rows(content: bytes) -> list[dict]:
 # --------------------------------------------------------------------------- fetching
 
 
-def _backoff(attempt: int) -> None:
-    time.sleep(2 * (attempt + 1))
-
-
 def _retry(what: str, fn: Callable, attempts: int = 4):
-    for attempt in range(attempts):
-        try:
-            return fn()
-        except (httpx.HTTPError, zipfile.BadZipFile, ValueError, KeyError) as exc:
-            log.warning("AMFI TER %s attempt %d failed: %s", what, attempt + 1, exc)
-            _backoff(attempt)
-    raise RuntimeError(f"AMFI TER {what} failed after {attempts} attempts")
+    return with_retries(f"AMFI TER {what}", fn, attempts=attempts, retry_on=(httpx.HTTPError, zipfile.BadZipFile, ValueError, KeyError))
 
 
 def month_sort_key(month: str) -> tuple[int, int]:
@@ -524,7 +513,7 @@ def sync_ter(db: Session, months: int = 36, progress: Callable | None = None) ->
     """
     t0 = time.time()
     results, failed, empty = [], {}, []
-    with _client() as client:
+    with http_client() as client:
         wanted = list_months(client, months)
         if not wanted:
             return {"months": [], "error": "AMFI lists no TER months"}
@@ -621,47 +610,38 @@ def _plan_values(row, plan: str) -> dict | None:
     }
 
 
-def latest_ter(db: Session, amfi_codes: set[int]) -> dict[int, dict]:
-    """Current TER per AMFI code, using the Regular or Direct figures according to `Scheme.plan_type`.
-
-    Codes with no TER link, or whose plan shows no TER, are absent. `effective_from` is when these
-    figures started, not when they were last confirmed. brokerage/transaction are None for figures
-    disclosed in the layout used until March 2026.
-    """
-    codes = sorted(amfi_codes)
+def current_ter_rows(db: Session, amfi_codes: Iterable[int]) -> dict[int, SchemeTer]:
+    """The change point in force for each AMFI code's scheme, via its `ter` link. One row serves all of a
+    scheme's codes (it carries both the Regular and the Direct figures); codes without a link are absent."""
+    codes = sorted(set(amfi_codes))
     links: dict[int, str] = {}
-    plans: dict[int, str] = {}
     for i in range(0, len(codes), 900):
         chunk = codes[i : i + 900]
         links.update(db.execute(select(SchemeLink.amfi_code, SchemeLink.external_key).where(SchemeLink.source == LINK_SOURCE, SchemeLink.amfi_code.in_(chunk))).all())
-        plans.update(db.execute(select(Scheme.amfi_code, Scheme.plan_type).where(Scheme.amfi_code.in_(chunk))).all())
     latest = _latest(db, links.values())
+    return {code: latest[key] for code, key in links.items() if key in latest}
+
+
+def latest_ter(db: Session, amfi_codes: Iterable[int], plan: str | None = None) -> dict[int, dict]:
+    """Current TER per AMFI code: the `plan` ("regular" / "direct") figures for every code or, when `plan`
+    is None, those of each code's own `Scheme.plan_type`. The ranking asks for plan="regular" so a Direct
+    plan is costed like for like with its Regular-plan peers.
+
+    Codes with no TER link, or whose plan shows no TER (AMFI writes 0 for "no such plan"), are absent.
+    `effective_from` is when these figures started, not when they were last confirmed. brokerage/transaction
+    are None for figures disclosed in the layout used until March 2026.
+    """
+    rows = current_ter_rows(db, amfi_codes)
+    plans: dict[int, str] = {}
+    if plan is None:
+        codes = sorted(rows)
+        for i in range(0, len(codes), 900):
+            plans.update(db.execute(select(Scheme.amfi_code, Scheme.plan_type).where(Scheme.amfi_code.in_(codes[i : i + 900]))).all())
     out = {}
-    for code, key in links.items():
-        row, plan = latest.get(key), plans.get(code)
-        vals = _plan_values(row, plan) if row is not None and plan in ("regular", "direct") else None
+    for code, row in rows.items():
+        p = plan or plans.get(code)
+        vals = _plan_values(row, p) if p in ("regular", "direct") else None
         if vals:
-            out[code] = {**vals, "plan": plan, "effective_from": row.effective_from, "nsdl_code": key}
+            out[code] = {**vals, "plan": p, "effective_from": row.effective_from, "nsdl_code": row.nsdl_code}
     return out
 
-
-def _percentile(sorted_vals: list[float], q: float) -> float:
-    pos = (len(sorted_vals) - 1) * q
-    lo = int(pos)
-    hi = min(lo + 1, len(sorted_vals) - 1)
-    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (pos - lo)
-
-
-def category_ter_stats(db: Session, category_key: str, plan: str = "regular") -> dict | None:
-    """Median / quartiles of the current `plan` TER across the investable schemes of a category.
-
-    Each disclosed scheme counts once; None when no scheme in the category has a TER.
-    """
-    codes = list(db.scalars(select(Scheme.amfi_code).where(Scheme.in_universe.is_(True), Scheme.category_key == category_key)))
-    keys: set[str] = set()
-    for i in range(0, len(codes), 900):
-        keys |= set(db.scalars(select(SchemeLink.external_key).where(SchemeLink.source == LINK_SOURCE, SchemeLink.amfi_code.in_(codes[i : i + 900]))))
-    vals = sorted(v["ter"] for row in _latest(db, keys).values() if (v := _plan_values(row, plan)))
-    if not vals:
-        return None
-    return {"median": _percentile(vals, 0.5), "p25": _percentile(vals, 0.25), "p75": _percentile(vals, 0.75), "n": len(vals)}

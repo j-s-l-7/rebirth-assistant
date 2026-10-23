@@ -20,7 +20,8 @@ from urllib.parse import quote
 
 import httpx
 
-from app.config import BACKEND_DIR, get_settings
+from app.config import BACKEND_DIR
+from app.http import http_client
 
 log = logging.getLogger(__name__)
 
@@ -55,13 +56,6 @@ def _supabase() -> tuple[str, str] | None:
     return (url.rstrip("/"), key) if url and key else None
 
 
-def _http_client() -> httpx.Client:
-    return httpx.Client(
-        timeout=httpx.Timeout(get_settings().http_timeout_s, connect=20.0),
-        headers={"User-Agent": "ra-backend/0.1 (+mutual fund data sync)"},
-    )
-
-
 def _fail(action: str, resp: httpx.Response, key: str) -> ArchiveError:
     body = resp.text.replace(key, "***")[:200]
     return ArchiveError(f"Supabase Storage {action} failed: HTTP {resp.status_code}: {body}")
@@ -82,7 +76,7 @@ def _upload(base: str, key: str, object_path: str, data: bytes, content_type: st
     url = f"{base}/storage/v1/object/{BUCKET}/{quote(object_path, safe='/')}"
     headers = {**auth, "Content-Type": content_type or "application/octet-stream", "x-upsert": "true"}
     last: Exception | None = None
-    with _http_client() as client:
+    with http_client(follow_redirects=False) as client:
         _ensure_bucket(client, base, auth, key)
         for attempt in range(3):
             try:

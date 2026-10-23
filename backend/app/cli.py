@@ -8,11 +8,12 @@
     python -m app.cli compute-metrics         # peer rankings for every category
     python -m app.cli sync-scheme-details     # AMFI scheme master details (launch dates, minimums, ISINs)
     python -m app.cli sync-ter --months 36    # AMFI total expense ratios (stored as change points)
-    python -m app.cli sync-performance        # AMFI fund performance vs official benchmarks
     python -m app.cli sync-documents          # regulatory texts + AMFI monthly reports (originals + full text)
     python -m app.cli search-docs "QUERY"     # full-text search over stored documents
     python -m app.cli daily                   # all daily feeds, gap repair, universe refinement, rankings
     python -m app.cli load-disclosures FILE.csv
+    python -m app.cli load-portfolios PATH_OR_URL [...]   # AMC monthly portfolio workbooks (.xls/.xlsx/.zip)
+    python -m app.cli push-holdings [--apply]   # local holdings -> Supabase (needs SUPABASE_DATABASE_URL; dry run unless --apply)
     python -m app.cli stats
     python -m app.cli print-ddl > sql/schema.sql   # Postgres DDL for review (tables live in DB_SCHEMA)
 """
@@ -75,6 +76,35 @@ def run_daily(db: Session) -> dict:
     return out
 
 
+def load_portfolio_sources(db: Session, sources: list[str]) -> dict:
+    """Load each file or URL in turn (URLs fetched one at a time, a few seconds apart); print a summary per file."""
+    from pathlib import Path
+
+    from app.data.portfolios import load_portfolios
+    from app.data.ter import _NameMatcher
+    from app.http import http_client, with_retries
+
+    matcher = _NameMatcher(db, 95.0)
+    files = []
+    with http_client() as client:
+        for i, src in enumerate(sources):
+            if src.startswith(("http://", "https://")):
+                if i:
+                    time.sleep(3)
+                try:
+                    content = with_retries(f"portfolio {src}", lambda src=src: client.get(src).raise_for_status().content, attempts=2)
+                except RuntimeError as exc:
+                    files.append({"file": src, "error": str(exc)})
+                    continue
+            else:
+                content = Path(src).read_bytes()
+            res = load_portfolios(db, content, src, matcher)
+            print(f"{src}: {res['schemes_parsed']} schemes parsed, {res['linked']} linked, {res['quarantined']} quarantined, "
+                  f"{res['unlinked']} unlinked, {res['rows']} rows", flush=True)
+            files.append(res)
+    return {"files": files}
+
+
 def print_ddl() -> None:
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.schema import CreateIndex, CreateTable
@@ -110,7 +140,6 @@ def main() -> None:
     sub.add_parser("sync-scheme-details")
     t = sub.add_parser("sync-ter")
     t.add_argument("--months", type=int, default=36)
-    sub.add_parser("sync-performance")
     sub.add_parser("refine-universe")
     docs = sub.add_parser("sync-documents")
     docs.add_argument("--monthly-reports", type=int, default=24)
@@ -120,6 +149,16 @@ def main() -> None:
     sub.add_parser("daily")
     d = sub.add_parser("load-disclosures")
     d.add_argument("path")
+    lp = sub.add_parser("load-portfolios")
+    lp.add_argument("sources", nargs="+", metavar="PATH_OR_URL")
+    rf = sub.add_parser("register-files")
+    rf.add_argument("paths", nargs="+", metavar="PATH")
+    rf.add_argument("--amc", required=True)
+    rf.add_argument("--month", required=True, help="YYYY-MM")
+    rf.add_argument("--source-url", required=True)
+    rf.add_argument("--via", choices=["amc", "mirror"], required=True)
+    ph = sub.add_parser("push-holdings")
+    ph.add_argument("--apply", action="store_true")
     sub.add_parser("stats")
     sub.add_parser("print-ddl")
     args = p.parse_args()
@@ -164,10 +203,6 @@ def main() -> None:
             from app.data.ter import sync_ter
 
             out = sync_ter(db, months=args.months, progress=lambda *a: print("  ", *a, flush=True))
-        elif args.cmd == "sync-performance":
-            from app.data.performance_feed import sync_performance
-
-            out = sync_performance(db)
         elif args.cmd == "refine-universe":
             from app.data.universe import refine_universe
 
@@ -188,6 +223,16 @@ def main() -> None:
             from app.data.disclosures import load_disclosure_csv
 
             out = {"rows": load_disclosure_csv(db, Path(args.path))}
+        elif args.cmd == "load-portfolios":
+            out = load_portfolio_sources(db, args.sources)
+        elif args.cmd == "register-files":
+            from app.data.source_files import register_files
+
+            out = register_files(db, args.paths, args.amc, args.month, args.source_url, args.via)
+        elif args.cmd == "push-holdings":
+            from app.data.push_holdings import push_holdings, target_engine
+
+            out = push_holdings(db, target_engine(), apply=args.apply)
         else:
             from app.models import Investor, NavPoint, Scheme
 

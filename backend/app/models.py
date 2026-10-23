@@ -1,4 +1,4 @@
-"""ORM models: the MVP subset of the PRD ERD (§14), plus goals and escalations.
+"""ORM models: the subset of the PRD ERD (§14) the chat uses, plus escalations.
 
 Money is stored as NUMERIC and read back as float (asdecimal=False): exact enough
 for display/analytics, and Postgres keeps NUMERIC precision at rest.
@@ -37,10 +37,6 @@ def Money():  # noqa: N802 - column factory
     return Numeric(18, 2, asdecimal=False)
 
 
-def Units():  # noqa: N802
-    return Numeric(18, 4, asdecimal=False)
-
-
 def Nav():  # noqa: N802
     return Numeric(14, 4, asdecimal=False)
 
@@ -54,11 +50,8 @@ class Investor(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
     # Shown in the UI only. Never sent to the LLM (PRD §14.5 LLM boundary).
     display_name: Mapped[str] = mapped_column(String(120), default="Investor")
-    pan_enc: Mapped[bytes | None] = mapped_column()
-    pan_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
-    pan_masked: Mapped[str | None] = mapped_column(String(16))
-    risk_bucket: Mapped[str | None] = mapped_column(String(32))
-    tax_slab_pct: Mapped[float | None] = mapped_column(Float)
+    # Legacy (demo investors of the earlier portfolio app). Kept because the production column is
+    # NOT NULL without a server default; drop both together in a migration.
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -98,17 +91,27 @@ class NavPoint(Base):
 
 
 class SchemeHolding(Base):
-    """Monthly portfolio disclosure lines (stock-level overlap). PRD: SCHEME_PORTFOLIO."""
+    """One line of a scheme's monthly portfolio disclosure: the look-through holdings behind exposure and
+    overlap analysis. A portfolio belongs to the scheme, so it is stored once, under the scheme's
+    Regular-Growth code; other plans/options of the scheme share it. `weight_pct` is % of net assets as
+    disclosed (negative for short derivative positions, e.g. the hedge leg of arbitrage)."""
 
     __tablename__ = "scheme_portfolio"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
     amfi_code: Mapped[int] = mapped_column(ForeignKey("scheme.amfi_code"), index=True)
-    disclosure_month: Mapped[date] = mapped_column(Date)
-    security_isin: Mapped[str | None] = mapped_column(String(12))
+    disclosure_month: Mapped[date] = mapped_column(Date)  # last day of the month disclosed
+    security_isin: Mapped[str | None] = mapped_column(String(12), index=True)
     security_name: Mapped[str] = mapped_column(String(160))
-    sector: Mapped[str | None] = mapped_column(String(80))
+    sector: Mapped[str | None] = mapped_column(String(80))  # normalised roll-up of `industry`
+    industry: Mapped[str | None] = mapped_column(String(120))  # as disclosed, normalised spelling
+    # equity | debt | money_market | cash | derivative | reit_invit | mf_units | foreign_equity | gold | other
+    asset_class: Mapped[str | None] = mapped_column(String(20))
     weight_pct: Mapped[float] = mapped_column(Float)
+    market_value_inr: Mapped[float | None] = mapped_column(Float)
+    quantity: Mapped[float | None] = mapped_column(Float)
+    rating: Mapped[str | None] = mapped_column(String(40))
+    source_url: Mapped[str | None] = mapped_column(Text)
 
 
 class SchemeMetric(Base):
@@ -195,6 +198,25 @@ class SchemePerformance(Base):
     returns: Mapped[dict | None] = mapped_column(JSON)  # {"1y": %, "3y": %, "5y": %, "10y": %, "since_launch": %}
     benchmark_returns: Mapped[dict | None] = mapped_column(JSON)
     raw: Mapped[dict] = mapped_column(JSON)
+
+
+class SourceFile(Base):
+    """An original AMC disclosure file kept as downloaded (under backend/data/source_files/), so any
+    loaded holding can be traced back to the file it came from."""
+
+    __tablename__ = "source_file"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    amc_name: Mapped[str] = mapped_column(String(120), index=True)  # exactly as scheme.amc_name
+    disclosure_month: Mapped[date] = mapped_column(Date)  # last day of the month disclosed
+    kind: Mapped[str] = mapped_column(String(20), default="portfolio")
+    filename: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    source_url: Mapped[str] = mapped_column(Text)  # public AMC page or download URL, never a local path
+    via: Mapped[str] = mapped_column(String(10))  # amc | mirror
+    stored_path: Mapped[str] = mapped_column(Text)  # relative to backend/data/source_files/
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class SchemeLink(Base):
