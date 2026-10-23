@@ -30,3 +30,7 @@ app.add_middleware(
 app.add_middleware(RequestIdMiddleware)
 for r in (health.router, investors.router, chat.router, admin.router, portfolio.router):
     app.include_router(r, prefix="/api")
+if get_settings().data_explorer_enabled:
+    from app.api import data_explorer
+
+    app.include_router(data_explorer.router, prefix="/api")

@@ -200,6 +200,25 @@ class SchemePerformance(Base):
     raw: Mapped[dict] = mapped_column(JSON)
 
 
+class SourceFile(Base):
+    """An original AMC disclosure file kept as downloaded (under backend/data/source_files/), so any
+    loaded holding can be traced back to the file it came from."""
+
+    __tablename__ = "source_file"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_id)
+    amc_name: Mapped[str] = mapped_column(String(120), index=True)  # exactly as scheme.amc_name
+    disclosure_month: Mapped[date] = mapped_column(Date)  # last day of the month disclosed
+    kind: Mapped[str] = mapped_column(String(20), default="portfolio")
+    filename: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    source_url: Mapped[str] = mapped_column(Text)  # public AMC page or download URL, never a local path
+    via: Mapped[str] = mapped_column(String(10))  # amc | mirror
+    stored_path: Mapped[str] = mapped_column(Text)  # relative to backend/data/source_files/
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class SchemeLink(Base):
     """How an external feed's scheme identifier maps to AMFI codes (one row per code and source)."""
 

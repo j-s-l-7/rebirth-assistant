@@ -151,6 +151,12 @@ def main() -> None:
     d.add_argument("path")
     lp = sub.add_parser("load-portfolios")
     lp.add_argument("sources", nargs="+", metavar="PATH_OR_URL")
+    rf = sub.add_parser("register-files")
+    rf.add_argument("paths", nargs="+", metavar="PATH")
+    rf.add_argument("--amc", required=True)
+    rf.add_argument("--month", required=True, help="YYYY-MM")
+    rf.add_argument("--source-url", required=True)
+    rf.add_argument("--via", choices=["amc", "mirror"], required=True)
     ph = sub.add_parser("push-holdings")
     ph.add_argument("--apply", action="store_true")
     sub.add_parser("stats")
@@ -219,6 +225,10 @@ def main() -> None:
             out = {"rows": load_disclosure_csv(db, Path(args.path))}
         elif args.cmd == "load-portfolios":
             out = load_portfolio_sources(db, args.sources)
+        elif args.cmd == "register-files":
+            from app.data.source_files import register_files
+
+            out = register_files(db, args.paths, args.amc, args.month, args.source_url, args.via)
         elif args.cmd == "push-holdings":
             from app.data.push_holdings import push_holdings, target_engine
 

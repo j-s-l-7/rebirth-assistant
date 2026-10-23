@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # /admin/* endpoints require this value in the X-Admin-Token header; unset, they are disabled.
     admin_token: str | None = None
 
+    # Internal, local-only data explorer (/api/data/*). Unauthenticated: never enable in production.
+    data_explorer_enabled: bool = False
+
     # --- Data freshness and telemetry (app/freshness.py, app/telemetry.py) ------------------------
     # Fund data is stale when the latest NAV date or ranking run is more than this many business
     # days (Mon-Fri) behind today in IST. A lag of 1 is normal during the day.
